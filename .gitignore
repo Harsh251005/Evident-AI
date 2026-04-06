@@ -1,0 +1,92 @@
+# Byte-compiled / optimized / DLL files
+
+**pycache**/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+
+.venv/
+venv/
+env/
+ENV/
+
+# IDEs
+
+.vscode/
+.idea/
+*.iml
+
+# OS files
+
+.DS_Store
+Thumbs.db
+
+# Python packaging
+
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Logs
+
+*.log
+
+# Environment variables
+
+.env
+.env.*
+*.env
+
+# Jupyter Notebook
+
+.ipynb_checkpoints/
+
+# Pytest / coverage
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type checkers
+
+.mypy_cache/
+.pyre/
+.pytype/
+
+# Ruff / linting
+
+.ruff_cache/
+
+# Temporary files
+
+*.tmp
+*.temp
+
+# SQLite (if you experiment locally)
+
+*.db
+
+# Vector DB / embeddings (important for RAG projects)
+
+chroma/
+faiss_index/
+*.faiss
+*.pkl
+
+# LangSmith / logs / traces (optional)
+
+logs/
+traces/
+
+# Uploaded PDFs (you usually don’t want to commit these)
+
+data/
+uploads/
+
+# Misc
+
+*.bak
+*.swp
