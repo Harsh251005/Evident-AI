@@ -4,3 +4,9 @@ openai
 python-dotenv
 rank-bm25
 cohere
+ragas
+datasets
+sentence-transformers
+langchain-text-splitters
+pyyaml
+streamlit
