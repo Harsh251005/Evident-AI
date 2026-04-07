@@ -1,14 +1,11 @@
+from config import settings
 from openai import OpenAI
-import os
-from dotenv import load_dotenv
 
-load_dotenv()
-
-client = OpenAI()
+client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
 def generate_answer(prompt):
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=settings.OPENAI_MODEL,
         messages=[{"role": "user", "content": prompt}]
     )
 
