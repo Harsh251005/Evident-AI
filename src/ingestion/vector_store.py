@@ -2,12 +2,13 @@ import hashlib
 import uuid
 import os
 
+from config import settings
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct
 
 
 # ---------- QDRANT CLIENT ----------
-client = QdrantClient(url="http://localhost:6333")
+client = QdrantClient(url=settings.QDRANT_URL)
 
 
 # ---------- UTILS ----------
@@ -53,18 +54,24 @@ def is_collection_empty(collection_name: str) -> bool:
 
 # ---------- ADD DATA ----------
 
-def add_points(collection_name, embeddings, texts, metadata):
+# ---------- ADD DATA ----------
+
+def add_points(collection_name, embeddings, chunks, metadata):
     points = []
 
+    # Simplified loop inside add_points
     for i in range(len(embeddings)):
+        # Pull everything directly from the chunk object
+        chunk = chunks[i]
+
         points.append(
             PointStruct(
                 id=str(uuid.uuid4()),
                 vector=embeddings[i],
                 payload={
-                    "text": texts[i],
-                    "page": metadata[i]["page"],
-                    "source": metadata[i].get("source", "unknown")
+                    "text": chunk.page_content,
+                    "page": chunk.metadata.get("page_no", 0),
+                    "source": chunk.metadata.get("source", "unknown")
                 }
             )
         )

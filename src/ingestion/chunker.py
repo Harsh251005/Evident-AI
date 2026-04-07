@@ -1,20 +1,14 @@
-def chunk_text(documents, chunk_size=500, overlap=100):
-    chunks = []
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-    for doc in documents:
-        text = doc["text"]
-        page = doc["page"]
+def split_texts(doc):
 
-        start = 0
-        while start < len(text):
-            end = start + chunk_size
-            chunk = text[start:end]
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=700,
+        chunk_overlap=200,
+        length_function=len,
+        add_start_index=True
+    )
 
-            chunks.append({
-                "text": chunk,
-                "page": page
-            })
-
-            start += chunk_size - overlap
+    chunks = text_splitter.split_documents(doc)
 
     return chunks
