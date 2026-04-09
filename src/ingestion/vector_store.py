@@ -5,8 +5,10 @@ from config import settings
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct
 
-client = QdrantClient(url=settings.QDRANT_URL)
-
+client = QdrantClient(
+    url=settings.QDRANT_URL,
+    api_key=settings.QDRANT_API_KEY  # This is the new part
+)
 def generate_collection_name(file_path: str) -> str:
     """
     Generates a unique, clean collection name.

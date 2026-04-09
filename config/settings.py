@@ -34,7 +34,8 @@ TOP_K = 5
 
 # --- INFRASTRUCTURE ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+QDRANT_URL = os.getenv("QDRANT_URL")
 
 # --- LANGSMITH MONITORING ---
 # We pull these from .env for security. Defaulting tracing to 'false' if key is missing.

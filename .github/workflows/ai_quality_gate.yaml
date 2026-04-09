@@ -27,6 +27,9 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
           QDRANT_URL: ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          LANGCHAIN_TRACING_V2: "true"
         run: |
           # 1. Run the evals to generate the experiment
           python -m src.evaluation.run_evals > eval_output.txt
