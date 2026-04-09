@@ -1,14 +1,16 @@
 import json
-import os
 from pathlib import Path
 from langsmith import evaluate, Client  # Added Client to handle the upload
 from src.pipeline.evident_rag import EvidentAIRAG
 from src.evaluation.metrics import calculate_citation_coverage, calculate_request_cost
+from src.ingestion.vector_store import generate_collection_name
 
 # 1. Setup Paths
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 DATASET_PATH = ROOT_DIR / "src" / "evaluation" / "dataset.json"
 DATASET_NAME = "Claude_Constitution_Eval_v1"
+DATA_PATH = "data/sample_pdf/claudes-constitution_webPDF_26-02.02a.pdf"
+EVAL_COLLECTION = generate_collection_name(DATA_PATH)
 
 
 def run_production_eval():
@@ -32,7 +34,7 @@ def run_production_eval():
         )
         print(f"✅ Sync complete: {DATASET_NAME} is now in the cloud.")
 
-    rag_system = EvidentAIRAG(collection_name="claudes-constitution_webpdf_26-02.02a_09559b3b")
+    rag_system = EvidentAIRAG(collection_name=EVAL_COLLECTION)
 
     def predict(inputs: dict):
         print(f"🧐 Querying: {inputs['question'][:50]}...")

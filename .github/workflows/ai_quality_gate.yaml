@@ -22,6 +22,20 @@ jobs:
           pip install -r requirements.txt
           python -c "import nltk; nltk.download('stopwords')"
 
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          python -c "import nltk; nltk.download('stopwords')"
+
+      # THE NEW STEP: Create the local BM25 index
+      - name: Warm-up Ingestion (Generate BM25 Index)
+        env:
+          QDRANT_URL: ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python -m main --file data/sample_pdf/claudes-constitution_webPDF_26-02.02a.pdf
+
       - name: Run Golden Dataset Evaluation
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
