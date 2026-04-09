@@ -32,7 +32,7 @@ def run_production_eval():
         )
         print(f"✅ Sync complete: {DATASET_NAME} is now in the cloud.")
 
-    rag_system = EvidentAIRAG()
+    rag_system = EvidentAIRAG(collection_name="claudes-constitution_webpdf_26-02.02a_09559b3b")
 
     def predict(inputs: dict):
         print(f"🧐 Querying: {inputs['question'][:50]}...")
