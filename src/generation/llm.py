@@ -1,8 +1,10 @@
 from config import settings
 from openai import OpenAI
+from langsmith import traceable
 
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
+@traceable(name="LLM Answer Generation")
 def generate_answer(prompt):
     response = client.chat.completions.create(
         model=settings.OPENAI_MODEL,

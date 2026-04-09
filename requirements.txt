@@ -10,3 +10,6 @@ sentence-transformers
 langchain-text-splitters
 pyyaml
 streamlit
+langsmith
+nltk
+hf_xet
