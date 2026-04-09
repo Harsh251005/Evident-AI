@@ -1,85 +1,54 @@
+from langsmith import traceable
 from config import settings
 from src.ingestion.embedder import embed_texts
-from src.ingestion.vector_store import client
-from src.retrieval.reranker import rerank
-
-# ---------- CONFIG ----------
-INITIAL_K = settings.INITIAL_K
-FINAL_K = settings.FINAL_K
-SCORE_THRESHOLD = settings.SCORE_THRESHOLD
+from src.retrieval.vector_search import vector_search
+from src.retrieval.bm25 import bm25_search
+from src.retrieval.reranker import rerank_documents
 
 
-def retrieve(query: str, collection_name: str, bm25=None, k: int = FINAL_K):
+@traceable(name="Hybrid Retrieval")
+def retrieve(query: str, collection_name: str, bm25_index=None, k: int = settings.FINAL_K):
+    """
+    Combines Vector Search, BM25 Search, and Cross-Encoder Reranking.
+    """
     # 1. DENSE RETRIEVAL
-    query_embedding = embed_texts([query])[0]
-    results = client.query_points(collection_name=collection_name, query=query_embedding, limit=INITIAL_K)
+    query_vector = embed_texts([query])[0]
+    dense_docs = vector_search(query_vector, collection_name, limit=settings.INITIAL_K)
 
-    dense_docs = []
-    for doc in results.points:
-        payload = doc.payload
-        dense_docs.append({
-            "text": payload.get("text", ""),
-            "metadata": {
-                "page": payload.get("page") or payload.get("page_no") or 0,
-                "source": payload.get("source", "Unknown PDF")
-            },
-            "score": doc.score
-        })
+    # Apply score thresholding
+    dense_docs = [d for d in dense_docs if d["score"] >= settings.SCORE_THRESHOLD]
 
-    # Apply Score Filter to Dense results only
-    dense_docs = [d for d in dense_docs if d["score"] >= SCORE_THRESHOLD]
+    # 2. BM25 RETRIEVAL
+    sparse_docs = []
+    if bm25_index:
+        # Calling the function defined in bm25.py
+        sparse_docs = bm25_search(bm25_index, query, k=settings.INITIAL_K)
 
-    # 2. BM25 RETRIEVAL (Use the passed 'bm25' object directly)
-    bm25_docs = []
-    if bm25:
-        raw_bm25_docs = bm25.search(query, k=INITIAL_K)
-        for doc in raw_bm25_docs:
-            meta = doc.get("metadata", {})
-            bm25_docs.append({
-                "text": doc.get("text", ""),
-                "metadata": {
-                    "page": meta.get("page") or meta.get("page_no") or 0,
-                    "source": meta.get("source", "Unknown PDF")
-                },
-                "score": doc.get("score", 0)
-            })
-
-    # 3. HYBRID MERGE & DEDUPLICATION
-    all_docs = dense_docs + bm25_docs
-
-    seen_text = set()
+    # 3. COMBINE & DEDUPLICATE
+    all_docs = dense_docs + sparse_docs
+    seen = set()
     unique_docs = []
     for doc in all_docs:
-        content_hash = hash(doc["text"].strip())  # Using hash is faster for long texts
-        if content_hash not in seen_text:
-            seen_text.add(content_hash)
+        content_hash = hash(doc["text"].strip())
+        if content_hash not in seen:
+            seen.add(content_hash)
             unique_docs.append(doc)
 
     if not unique_docs:
         return []
 
     # 4. RERANKING
-    reranked_docs = rerank(query, unique_docs, top_k=INITIAL_K)
+    reranked_docs = rerank_documents(query, unique_docs, top_k=settings.INITIAL_K)
 
-    # 5. DIVERSITY FILTERING (Page-level)
+    # 5. DIVERSITY FILTERING
     final_docs = []
     seen_pages = set()
-
     for doc in reranked_docs:
         page = doc["metadata"].get("page")
         if page not in seen_pages:
             seen_pages.add(page)
             final_docs.append(doc)
-
-        if len(final_docs) == k:
+        if len(final_docs) >= k:
             break
 
-    # Fallback if diversity is too strict
-    if len(final_docs) < k:
-        for doc in reranked_docs:
-            if doc not in final_docs:
-                final_docs.append(doc)
-            if len(final_docs) == k:
-                break
-
-    return final_docs
+    return final_docs[:k]
