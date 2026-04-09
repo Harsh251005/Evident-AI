@@ -1,0 +1,42 @@
+name: AI Quality Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  evaluate_rag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Golden Dataset Evaluation
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
+          QDRANT_URL: ${{ secrets.QDRANT_URL }}
+        run: |
+          # 1. Run the evals to generate the experiment
+          python -m src.evaluation.run_evals > eval_output.txt
+          
+          # 2. Extract the Experiment Name from the output
+          EXP_NAME=$(grep "Experiment Name" eval_output.txt | awk '{print $NF}')
+          echo "LANGSMITH_PROJECT_NAME=$EXP_NAME" >> $GITHUB_ENV
+
+      - name: Enforcement Gate
+        env:
+          LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
+        run: |
+          # This will exit with code 1 if citation < 80%, failing the build
+          python -m src.evaluation.eval_gate

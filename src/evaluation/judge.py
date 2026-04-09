@@ -1,28 +1,20 @@
-from src.generation.llm import generate_answer
+from src.generation.llm import generate_answer # Or use a direct OpenAI call
+from config.settings import PROMPTS
+
+JUDGE_PROMPT = PROMPTS['judge_prompt']
+
+import re
 
 
-def judge_answer(question, ground_truth, generated):
-    prompt = f"""
-You are an evaluator.
-
-Question: {question}
-
-Ground Truth Answer:
-{ground_truth}
-
-Generated Answer:
-{generated}
-
-Evaluate:
-1. Correctness (0-1)
-2. Completeness (0-1)
-
-Return JSON:
-{{
-  "correctness": ...,
-  "completeness": ...
-}}
-"""
-
+def grade_with_llm(ground_truth, generated_answer):
+    prompt = JUDGE_PROMPT.format(
+        ground_truth=ground_truth,
+        generated_answer=generated_answer
+    )
     response = generate_answer(prompt)
-    return response
+
+    # Use Regex to find the numeric score (1-5)
+    match = re.search(r"Score:\s*([1-5])", response)
+    score = int(match.group(1)) if match else None
+
+    return score, response

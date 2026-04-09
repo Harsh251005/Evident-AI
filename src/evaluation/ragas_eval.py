@@ -1,42 +1,24 @@
 from ragas import evaluate
-from ragas.metrics import (
-    faithfulness,
-    answer_relevancy,
-    context_precision,
-    context_recall
-)
-from datasets import Dataset
+from ragas.metrics import faithfulness, answer_relevancy, context_precision
+from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
-from ragas_embedder import RagasEmbeddingWrapper
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from datasets import Dataset
+from config import settings
 
-embedding_model = LangchainEmbeddingsWrapper(RagasEmbeddingWrapper())
+# Initialize the models
+evaluator_llm = LangchainLLMWrapper(ChatOpenAI(model=settings.OPENAI_MODEL))
+evaluator_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model=settings.EMBEDDING_MODEL))
 
+def run_ragas_evaluation(results_list):
+    dataset = Dataset.from_list(results_list)
 
-def run_ragas(results):
-    data = {
-        "question": [],
-        "answer": [],
-        "contexts": [],
-        "ground_truth": []
-    }
-
-    for r in results:
-        data["question"].append(r["question"])
-        data["answer"].append(r["generated"])
-        data["contexts"].append([c["text"] for c in r["context"]])
-        data["ground_truth"].append(r["ground_truth"])
-
-    dataset = Dataset.from_dict(data)
-
-    scores = evaluate(
+    result = evaluate(
         dataset,
-        metrics=[
-            faithfulness,
-            answer_relevancy,
-            context_precision,
-            context_recall
-        ],
-        embeddings=embedding_model,
+        metrics=[faithfulness, answer_relevancy, context_precision],
+        llm=evaluator_llm,
+        embeddings=evaluator_embeddings,
+        callbacks=[]
     )
 
-    return scores
+    return result.to_pandas()
