@@ -34,7 +34,7 @@ jobs:
           QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          python -m main --file data/sample_pdf/claudes-constitution_webPDF_26-02.02a.pdf
+          python -m main --file "data/sample_pdf/claudes-constitution_webPDF_26-02.02a.pdf" --ingest-only
 
       - name: Run Golden Dataset Evaluation
         env:

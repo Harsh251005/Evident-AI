@@ -83,7 +83,9 @@ traces/
 
 # Uploaded PDFs (you usually don’t want to commit these)
 
-data/
+data/*
+!data/sample_pdf/
+!data/sample_pdf/claudes-constitution_webPDF_26-02.02a.pdf
 uploads/
 
 # Misc
