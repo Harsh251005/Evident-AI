@@ -3,20 +3,18 @@ from src.ingestion.vector_store import generate_collection_name
 from src.pipeline.ingestion import ingestion_pipeline
 from src.pipeline.retrieval import setup_bm25, query_loop
 
-PDF_PATH = settings.STORY_PDF_PATH
+# CHANGE THIS LINE:
+PDF_PATH = settings.CLAUDE_CONSTITUTION_PDF_PATH
 
-# ---------- MAIN ----------
 def main():
     # 1. Run Ingestion
-    # If this skips, doc/chunks/embeds will be None
     doc, chunks, embeds = ingestion_pipeline(PDF_PATH)
-
     collection_name = generate_collection_name(PDF_PATH)
 
-    # 2. Setup BM25
-    # This now handles the "None" case by loading from disk if ingestion was skipped
+    # 2. Setup BM25 (FIXED: Ensure only 2 arguments are passed)
     try:
-        bm25 = setup_bm25(collection_name, chunks, [c.metadata for c in chunks] if chunks else None)
+        # We only pass collection_name and chunks
+        bm25 = setup_bm25(collection_name, chunks)
     except Exception as e:
         print(f"[ERROR] BM25 Setup failed: {e}")
         return
