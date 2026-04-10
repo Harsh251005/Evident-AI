@@ -9,15 +9,19 @@ on:
       - 'LICENSE'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+      - 'LICENSE'
 
 jobs:
   evaluate_rag:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -26,12 +30,6 @@ jobs:
           pip install -r requirements.txt
           python -c "import nltk; nltk.download('stopwords')"
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          python -c "import nltk; nltk.download('stopwords')"
-
-      # THE NEW STEP: Create the local BM25 index
       - name: Warm-up Ingestion (Generate BM25 Index)
         env:
           QDRANT_URL: ${{ secrets.QDRANT_URL }}
@@ -60,5 +58,5 @@ jobs:
         env:
           LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
         run: |
-          # This will exit with code 1 if citation < 80%, failing the build
+          # Fails build if citation accuracy is below threshold
           python -m src.evaluation.eval_gate
