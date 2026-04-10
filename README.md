@@ -10,8 +10,9 @@ Using a **Golden Dataset of 50 ground-truth questions** (Claude's Constitution D
 
 | Metric              | Initial Prototype        | Optimized System   | Improvement                |
 |---------------------|--------------------------|--------------------|----------------------------|
-| P99 Latency         | 43.36s                   | 10.26s             | ↓ 76%                      |
-| Citation Coverage   | 53.3%                    | 93.7%              | ↑ 40.4%                    |
+| P99 Latency         | 43.36s                   | 8.57s              | ↓ 80.2%                    |
+| P50 Latency         | 33.15s                   | 6.14s              | ↓ 81.5%                    |
+| Citation Coverage   | 53%                      | 98%                | ↑ 85%                      |
 | Prompting Technique | Zero Shot Prompting      | One Shot Prompting | Improved Citation Accuracy |
 | Reranking           | BAAI/bge-reranker-v2-m3  | BGE-Reranker-Base  | Improved Latency           |
 

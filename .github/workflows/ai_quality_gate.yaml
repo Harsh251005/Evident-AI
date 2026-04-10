@@ -3,6 +3,10 @@ name: AI Quality Gate
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+      - 'LICENSE'
   pull_request:
     branches: [ main ]
 
