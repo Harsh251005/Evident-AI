@@ -1,6 +1,11 @@
 import streamlit as st
+import nltk
+
+nltk.download('stopwords')
+
 from src.pipeline.evident_rag import EvidentAIRAG
 from src.retrieval.dynamic_ingest import process_user_upload
+
 
 st.set_page_config(page_title="EvidentAI", page_icon="🔍")
 
