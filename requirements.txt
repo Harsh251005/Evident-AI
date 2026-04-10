@@ -13,3 +13,4 @@ streamlit
 langsmith
 nltk
 hf_xet
+flashrank

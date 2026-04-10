@@ -37,7 +37,7 @@ EvidentAI follows a **Multi-Stage Retrieval & Refinement Pipeline** to ensure on
   Uses `BAAI/bge-reranker-base` to re-rank top results and select the most relevant chunks.
 
 * **Context Optimization**
-  Top 10 results → reranked → best 5 chunks selected ("Golden 5")
+  Top 10 results → reranked → best 4 chunks selected ("Golden 4")
 
 * **Enforced Citation Generation**
   One-shot prompting + Chain-of-Verification ensures every response is grounded with `(Page X)` references.

@@ -28,9 +28,9 @@ CHUNK_OVERLAP = 150
 
 # --- RETRIEVAL SETTINGS ---
 INITIAL_K = 10        # Number of docs to fetch before reranking
-FINAL_K = 4          # Number of docs to send to the LLM after reranking
-SCORE_THRESHOLD = 0.35 # Minimum confidence to consider a chunk
-TOP_K = 5
+FINAL_K = 3          # Number of docs to send to the LLM after reranking
+SCORE_THRESHOLD = 0.50 # Minimum confidence to consider a chunk
+TOP_K = 3
 
 # --- INFRASTRUCTURE ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
