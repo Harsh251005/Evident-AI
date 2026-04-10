@@ -1,19 +1,19 @@
 # 🔍 EvidentAI: Production-Grade RAG with Automated Quality Gates
 
-EvidentAI is a high-precision Retrieval-Augmented Generation (RAG) system designed for document auditing. Unlike standard chatbots, EvidentAI is engineered for grounded truth, achieving high citation accuracy while maintaining enterprise-level latency through a multi-stage retrieval pipeline.
+EvidentAI is a high-precision Retrieval-Augmented Generation (RAG) system designed for document auditing. Unlike standard chatbots, EvidentAI is engineered for grounded truth, achieving high citation accuracy through a multi-stage retrieval pipeline.
 
 ---
 
 ## 🚀 Performance Benchmarks
 
-Using a **Golden Dataset of 50 ground-truth questions**, the system was optimized from a slow prototype into a production-ready engine.
+Using a **Golden Dataset of 50 ground-truth questions** (Claude's Constitution Document), the system was optimized from a slow prototype into a production-ready engine.
 
-| Metric              | Initial Prototype        | Optimized System   | Improvement                                     |
-|---------------------|--------------------------|--------------------|-------------------------------------------------|
-| P99 Latency         | 43.36s                   | 10.26s             | ↓ 76%                                           |
-| Citation Coverage   | 53.3%                    | 93.7%              | ↑ 40.4%                                         |
-| Prompting Technique | Zero Shot Prompting      | One Shot Prompting | Improved Response and citation                  |
-| Reranking           | BAAI/bge-reranker-v2-m3  | BGE-Reranker-Base  | Significant drop in latency                     |
+| Metric              | Initial Prototype        | Optimized System   | Improvement                |
+|---------------------|--------------------------|--------------------|----------------------------|
+| P99 Latency         | 43.36s                   | 10.26s             | ↓ 76%                      |
+| Citation Coverage   | 53.3%                    | 93.7%              | ↑ 40.4%                    |
+| Prompting Technique | Zero Shot Prompting      | One Shot Prompting | Improved Citation Accuracy |
+| Reranking           | BAAI/bge-reranker-v2-m3  | BGE-Reranker-Base  | Improved Latency           |
 
 ---
 
@@ -56,6 +56,25 @@ EvidentAI follows a **Multi-Stage Retrieval & Refinement Pipeline** to ensure on
 
 ---
 
+## 🔎 Observability & Evaluation Dashboard
+
+EvidentAI provides full transparency into system behavior using LangSmith.
+
+### 📊 Evaluation Results (Public Dashboard)
+
+You can explore the evaluation dataset results here:
+
+🔗 [https://smith.langchain.com/public/4dbe49ea-ed0d-41cf-8dcc-881bfa25e172/d](https://smith.langchain.com/public/4dbe49ea-ed0d-41cf-8dcc-881bfa25e172/d)
+
+This includes:
+
+* Per-question performance analysis
+* Latency per question
+* Citation coverage tracking
+* Execution traces for debugging
+
+---
+
 ## 🛡️ CI/CD Quality Gate
 
 This project includes an automated **AI Quality Gate** to prevent low-quality deployments.
@@ -73,7 +92,7 @@ This project includes an automated **AI Quality Gate** to prevent low-quality de
 
 ```bash
 git clone https://github.com/Harsh251005/Evident-AI.git
-cd EvidentAI
+cd Evident-AI
 ```
 
 ### 2. Install Dependencies

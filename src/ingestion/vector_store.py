@@ -7,7 +7,8 @@ from qdrant_client.models import VectorParams, Distance, PointStruct
 
 client = QdrantClient(
     url=settings.QDRANT_URL,
-    api_key=settings.QDRANT_API_KEY  # This is the new part
+    api_key=settings.QDRANT_API_KEY,
+    prefer_grpc=False
 )
 def generate_collection_name(file_path: str) -> str:
     """
