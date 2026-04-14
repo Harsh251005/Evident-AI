@@ -233,12 +233,12 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
+    # ── ORIGINAL LOGIC — untouched ──────────────────────────────────────────
     if uploaded_file:
-        with st.spinner("Indexing…"):
+        with st.spinner("Indexing document..."):
             target_collection = process_user_upload(uploaded_file)
 
         file_size = round(uploaded_file.size / 1024, 1)
-
         st.markdown(f"""
         <div style="margin-top:1.2rem;background:var(--surface);border:1px solid var(--border-2);
                     border-radius:10px;padding:1rem 1.1rem;">
@@ -247,7 +247,7 @@ with st.sidebar:
                              display:inline-block;box-shadow:0 0 6px rgba(58,184,112,0.35);
                              flex-shrink:0;"></span>
                 <span style="font-family:var(--mono);font-size:0.68rem;
-                             color:var(--green);letter-spacing:0.04em;">Indexed</span>
+                             color:var(--green);letter-spacing:0.04em;">Ready</span>
             </div>
             <div style="font-family:var(--mono);font-size:0.72rem;color:var(--ink-2);
                         line-height:1.9;word-break:break-word;">
@@ -267,8 +267,9 @@ with st.sidebar:
 
 
 # ── RAG engine ─────────────────────────────────────────────────────────────────
+# ORIGINAL LOGIC — untouched
 @st.cache_resource
-def get_rag(collection: str) -> EvidentAIRAG:
+def get_rag(collection):
     return EvidentAIRAG(collection_name=collection)
 
 rag_engine = get_rag(target_collection)
@@ -322,15 +323,14 @@ st.markdown(f"""
 
 
 # ── Chat ───────────────────────────────────────────────────────────────────────
+# ORIGINAL LOGIC — untouched
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Render history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# Empty state
 if not st.session_state.messages:
     st.markdown("""
     <div style="text-align:center;padding:3.5rem 0 2rem;">
@@ -345,15 +345,13 @@ if not st.session_state.messages:
     </div>
     """, unsafe_allow_html=True)
 
-# Input
 if prompt := st.chat_input("Ask anything about your document…"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner(""):
-            response = rag_engine.chain.invoke(prompt)
+        response = rag_engine.chain.invoke(prompt)
         st.markdown(response)
 
     st.session_state.messages.append({"role": "assistant", "content": response})
