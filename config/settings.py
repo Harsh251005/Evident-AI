@@ -46,7 +46,7 @@ PROMPTS = load_prompts()
 
 class Settings:
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
-    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_MODEL: str = "gpt-4.1-mini"
     EMBEDDING_MODEL: str = "text-embedding-3-small"
 
     QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
