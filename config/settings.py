@@ -17,14 +17,10 @@ STORY_PDF_PATH = os.path.join(DATA_DIR, "sample_pdf", "Story.pdf")
 CLAUDE_CONSTITUTION_PDF_PATH = os.path.join(DATA_DIR, "sample_pdf", "claudes-constitution_webPDF_26-02.02a.pdf")
 
 # --- MODEL SETTINGS ---
-OPENAI_MODEL = "gpt-4o-mini"
-EMBEDDING_MODEL = "text-embedding-3-small"
 RERANKER_MODEL = "BAAI/bge-reranker-base"
 VECTOR_SIZE = 1536
 
-# --- CHUNKING SETTINGS ---
-CHUNK_SIZE = 700
-CHUNK_OVERLAP = 150
+
 
 # --- RETRIEVAL SETTINGS ---
 INITIAL_K = 10        # Number of docs to fetch before reranking
@@ -52,3 +48,11 @@ def load_prompts():
         return yaml.safe_load(f)
 
 PROMPTS = load_prompts()
+
+class Settings:
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
+
+
+settings = Settings()
