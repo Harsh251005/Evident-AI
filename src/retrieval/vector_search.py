@@ -54,6 +54,11 @@ def vector_search(
     documents = []
 
     for point in results:
+
+        logger.info(
+            f"Retrieved chunk | score={point.score:.4f}"
+        )
+
         payload = point.payload
 
         documents.append(

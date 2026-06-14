@@ -1,86 +1,93 @@
-import os
-import re
-import pickle
-from pathlib import Path
+from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
-from nltk.corpus import stopwords
-from nltk.stem import PorterStemmer
 
-# Import your project settings
-from config import settings
+from src.ingestion.vector_store import client
+from src.utils.logger import get_logger
 
-STOPWORDS = set(stopwords.words("english"))
-STEMMER = PorterStemmer()
+logger = get_logger(__name__)
 
-def tokenize(text: str):
-    """Clean, tokenize, and stem text for BM25 processing."""
-    text = text.lower()
-    tokens = re.findall(r"[a-z0-9]+", text)
-    return [STEMMER.stem(t) for t in tokens if t not in STOPWORDS]
 
-def build_bm25_index(chunks):
-    """Builds a BM25 index from document chunks."""
-    texts = [doc.page_content for doc in chunks]
-    metadatas = [doc.metadata for doc in chunks]
-    tokenized_corpus = [tokenize(t) for t in texts]
-
-    bm25 = BM25Okapi(tokenized_corpus)
-    # We return a dictionary to store texts and metadata alongside the index
-    return {"bm25": bm25, "texts": texts, "metadata": metadatas}
-
-def setup_bm25(collection_name, chunks=None):
+def _get_collection_documents(
+    collection_name: str,
+) -> list[Document]:
     """
-    Loads an existing BM25 index or builds a new one if chunks are provided.
-    Uses settings.INDEX_DIR to ensure path consistency.
+    Fetch all documents from a Qdrant collection.
     """
-    # 1. Use the directory defined in your settings.py
-    index_path = os.path.join(settings.INDEX_DIR, f"{collection_name}_bm25.pkl")
 
-    # 2. Try to load from disk
-    if os.path.exists(index_path):
-        print(f"[INFO] Loading existing BM25 index from: {index_path}")
-        with open(index_path, "rb") as f:
-            return pickle.load(f)
+    documents = []
 
-    # 3. If not found, build it (only if chunks were passed)
-    if chunks is not None:
-        print(f"[INFO] Building new BM25 index for {collection_name}...")
-        index_data = build_bm25_index(chunks)
+    points, _ = client.scroll(
+        collection_name=collection_name,
+        limit=10000,
+        with_payload=True,
+        with_vectors=False,
+    )
 
-        # Ensure the index directory exists before saving
-        os.makedirs(settings.INDEX_DIR, exist_ok=True)
-        with open(index_path, "wb") as f:
-            pickle.dump(index_data, f)
-        print(f"[INFO] BM25 index saved successfully.")
-        return index_data
+    for point in points:
+        payload = point.payload
 
-    # 4. Critical Fail: No file and no data to make one
-    raise ValueError(f"BM25 Index not found at {index_path} and no chunks provided to build one. "
-                     "Please run ingestion via main.py first.")
+        documents.append(
+            Document(
+                page_content=payload["text"],
+                metadata={
+                    "source": payload.get("source"),
+                    "page_no": payload.get("page_no"),
+                },
+            )
+        )
 
-def bm25_search(index_data, query, k=10):
+    return documents
+
+
+def bm25_search(
+    query: str,
+    collection_name: str,
+    top_k: int = 5,
+) -> list[Document]:
     """
-    Searches the BM25 index and returns formatted results with scores.
+    Perform BM25 retrieval against all chunks in a collection.
     """
-    bm25 = index_data["bm25"]
-    texts = index_data["texts"]
-    metadatas = index_data["metadata"]
 
-    tokenized_query = tokenize(query)
+    if not query.strip():
+        raise ValueError("Query cannot be empty")
+
+    documents = _get_collection_documents(collection_name)
+
+    if not documents:
+        logger.warning(
+            f"No documents found in {collection_name}"
+        )
+        return []
+
+    tokenized_docs = [
+        doc.page_content.lower().split()
+        for doc in documents
+    ]
+
+    bm25 = BM25Okapi(tokenized_docs)
+
+    tokenized_query = query.lower().split()
+
     scores = bm25.get_scores(tokenized_query)
 
-    # Sort indices based on score in descending order
-    top_indices = sorted(
+    ranked_indices = sorted(
         range(len(scores)),
         key=lambda i: scores[i],
-        reverse=True
-    )[:k]
+        reverse=True,
+    )[:top_k]
 
-    return [
-        {
-            "text": texts[i],
-            "metadata": metadatas[i],
-            "score": float(scores[i])
-        }
-        for i in top_indices
-    ]
+    results = []
+
+    for idx in ranked_indices:
+        doc = documents[idx]
+
+        doc.metadata["score"] = float(scores[idx])
+
+        results.append(doc)
+
+    logger.info(
+        f"BM25 retrieved {len(results)} chunks "
+        f"from {collection_name}"
+    )
+
+    return results
