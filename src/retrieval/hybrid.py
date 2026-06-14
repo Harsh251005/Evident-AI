@@ -1,36 +1,70 @@
-from langsmith import traceable
-from config import settings
-from src.ingestion.embedder import embed_texts
+from collections import defaultdict
+
+from langchain_core.documents import Document
+
 from src.retrieval.vector_search import vector_search
 from src.retrieval.bm25 import bm25_search
-from src.retrieval.reranker import rerank_documents
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+RRF_K = 60
+
+def reciprocal_rank_fusion(
+    rankings: list[list[Document]],
+    top_k: int,
+) -> list[Document]:
+
+    scores = defaultdict(float)
+    document_lookup = {}
+
+    for ranking in rankings:
+
+        for rank, doc in enumerate(ranking, start=1):
+
+            doc_id = doc.page_content
+
+            scores[doc_id] += 1 / (RRF_K + rank)
+
+            document_lookup[doc_id] = doc
+
+    ranked_docs = sorted(
+        scores.items(),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+
+    return [
+        document_lookup[doc_id]
+        for doc_id, _ in ranked_docs[:top_k]
+    ]
 
 
-@traceable(name="Hybrid Retrieval Pipeline")
-def hybrid_search(query, collection_name, bm25_index=None, k=settings.FINAL_K):
-    """
-    Orchestrates the full retrieval flow: Dense + Sparse -> Deduplicate -> Rerank.
-    """
-    # 1. Generate Query Embedding
-    query_vector = embed_texts([query])[0]
+def hybrid_search(
+    query: str,
+    collection_name: str,
+    top_k: int = 5,
+) -> list[Document]:
 
-    # 2. Get Dense (Vector) and Sparse (BM25) results
-    dense_docs = vector_search(query_vector, collection_name, limit=settings.INITIAL_K)
+    vector_results = vector_search(
+        query=query,
+        collection_name=collection_name,
+        top_k=top_k * 2,
+    )
 
-    sparse_docs = []
-    if bm25_index:
-        sparse_docs = bm25_search(bm25_index, query, k=settings.INITIAL_K)
+    bm25_results = bm25_search(
+        query=query,
+        collection_name=collection_name,
+        top_k=top_k * 2,
+    )
 
-    # 3. Combine and Deduplicate based on text content
-    all_results = dense_docs + sparse_docs
-    unique_docs = []
-    seen_hashes = set()
+    results = reciprocal_rank_fusion(
+        [vector_results, bm25_results],
+        top_k=top_k,
+    )
 
-    for doc in all_results:
-        text_hash = hash(doc["text"].strip())
-        if text_hash not in seen_hashes:
-            seen_hashes.add(text_hash)
-            unique_docs.append(doc)
+    logger.info(
+        f"Hybrid search returned {len(results)} chunks"
+    )
 
-    # 4. Final Reranking
-    return rerank_documents(query, unique_docs, top_k=k)
+    return results
