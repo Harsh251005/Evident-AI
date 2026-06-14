@@ -1,56 +1,81 @@
-import os
-from config import settings
 from src.ingestion.pdf_loader import load_pdf
-from src.ingestion.chunker import split_texts
+from src.ingestion.chunker import chunk_documents
 from src.ingestion.embedder import embed_texts
 from src.ingestion.vector_store import (
     generate_collection_name,
+    collection_exists,
     create_collection_if_not_exists,
-    is_collection_empty,
     add_points,
 )
-from src.retrieval.bm25 import setup_bm25
+
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
-def ingestion_pipeline(pdf_path: str, force_reingest: bool = False, collection_name: str = None):
-    if not os.path.exists(pdf_path):
-        raise FileNotFoundError(f"[ERROR] File not found: {pdf_path}")
+def ingest_document(file_path: str) -> str:
+    """
+    Complete ingestion pipeline.
 
-    # 1. Use the provided name (from the uploader) or generate a default one
-    if collection_name is None:
-        collection_name = generate_collection_name(pdf_path)
+    Steps:
+    1. Generate collection name
+    2. Check if document already exists
+    3. Load PDF
+    4. Chunk documents
+    5. Generate embeddings
+    6. Create collection
+    7. Store vectors
 
-    # 2. FIX: Unified naming. Ensure this matches what setup_bm25 looks for!
-    # Most systems use _bm25.pkl suffix.
-    bm25_path = f"data/indices/{collection_name}_bm25.pkl"
+    Returns:
+        collection_name
+    """
 
-    # Check if we can truly skip
-    vector_exists = not is_collection_empty(collection_name)
-    bm25_exists = os.path.exists(bm25_path)
+    collection_name = generate_collection_name(file_path)
 
-    if not force_reingest and vector_exists and bm25_exists:
-        print(f"[INFO] Collection '{collection_name}' already indexed. Skipping. ✅")
-        # Just load existing
-        bm25_retriever = setup_bm25(collection_name)
-        return None, None, bm25_retriever
+    if collection_exists(collection_name):
+        logger.info(
+            f"Document already ingested: {collection_name}"
+        )
+        return collection_name
 
-    # --- START OF PROCESSING ---
-    print(f"[INFO] Processing Document for Collection: {collection_name}")
-    doc = load_pdf(pdf_path)
-    chunks = split_texts(doc)
+    logger.info(f"Starting ingestion for {file_path}")
 
-    # 1. Handle Vector Store
-    if force_reingest or not vector_exists:
-        print(f"[INFO] Ingesting {len(chunks)} points into Qdrant...")
-        texts_to_embed = [chunk.page_content for chunk in chunks]
-        embedded_texts = embed_texts(texts_to_embed)
-        create_collection_if_not_exists(collection_name, settings.VECTOR_SIZE)
-        add_points(collection_name, embedded_texts, chunks, [c.metadata for c in chunks])
+    docs = load_pdf(file_path)
 
-    # 2. Handle BM25 Index
-    # We pass 'chunks' here so if the file is missing, it builds it
-    print(f"[INFO] Building BM25 index at {bm25_path}...")
-    bm25_retriever = setup_bm25(collection_name, chunks=chunks)
+    if not docs:
+        raise ValueError(
+            f"No text extracted from PDF: {file_path}"
+        )
 
-    print("[INFO] Ingestion/Sync complete ✅")
-    return doc, chunks, bm25_retriever
+    chunks = chunk_documents(docs)
+
+    if not chunks:
+        raise ValueError(
+            f"No chunks generated from PDF: {file_path}"
+        )
+
+    texts = [chunk.page_content for chunk in chunks]
+
+    embeddings = embed_texts(texts)
+
+    if not embeddings:
+        raise ValueError(
+            "Embedding generation failed"
+        )
+
+    create_collection_if_not_exists(
+        collection_name=collection_name,
+        vector_size=len(embeddings[0]),
+    )
+
+    add_points(
+        collection_name=collection_name,
+        embeddings=embeddings,
+        chunks=chunks,
+    )
+
+    logger.info(
+        f"Ingestion completed successfully: {collection_name}"
+    )
+
+    return collection_name
