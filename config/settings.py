@@ -28,11 +28,6 @@ FINAL_K = 3          # Number of docs to send to the LLM after reranking
 SCORE_THRESHOLD = 0.50 # Minimum confidence to consider a chunk
 TOP_K = 3
 
-# --- INFRASTRUCTURE ---
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-QDRANT_URL = os.getenv("QDRANT_URL")
-
 # --- LANGSMITH MONITORING ---
 # We pull these from .env for security. Defaulting tracing to 'false' if key is missing.
 LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "true")
@@ -53,6 +48,9 @@ class Settings:
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
     OPENAI_MODEL: str = "gpt-4o-mini"
     EMBEDDING_MODEL: str = "text-embedding-3-small"
+
+    QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+    QDRANT_URL = os.getenv("QDRANT_URL")
 
 
 settings = Settings()

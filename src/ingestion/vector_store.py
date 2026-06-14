@@ -1,59 +1,93 @@
+from pathlib import Path
 import hashlib
 import uuid
-import os
-from config import settings
+
+from langchain_core.documents import Document
 from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, Distance, PointStruct
+from qdrant_client.models import Distance, PointStruct, VectorParams
+
+from config.settings import settings
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 client = QdrantClient(
     url=settings.QDRANT_URL,
     api_key=settings.QDRANT_API_KEY,
-    prefer_grpc=False
+    prefer_grpc=False,
 )
-def generate_collection_name(file_path: str) -> str:
-    """
-    Generates a unique, clean collection name.
-    """
-    file_name = os.path.basename(file_path)
-    # Important: read file to get hash
-    with open(file_path, "rb") as f:
-        file_bytes = f.read()
-        file_hash = hashlib.md5(file_bytes).hexdigest()[:8]
 
-    # Clean the name: remove temp prefixes, extensions, and spaces
-    clean_name = file_name.replace("temp_", "").replace(".pdf", "").replace(" ", "_").lower()
+def generate_collection_name(file_path: str) -> str:
+    file_path = Path(file_path)
+
+    with open(file_path, "rb") as f:
+        file_hash = hashlib.md5(f.read()).hexdigest()[:8]
+
+    clean_name = (
+        file_path.stem
+        .replace("temp_", "")
+        .replace(" ", "_")
+        .lower()
+    )
+
     return f"{clean_name}_{file_hash}"
 
-def create_collection_if_not_exists(collection_name: str, vector_size: int):
-    collections = client.get_collections().collections
-    exists = any(c.name == collection_name for c in collections)
-    if not exists:
-        client.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
+
+def create_collection_if_not_exists(
+    collection_name: str,
+    vector_size: int,
+) -> None:
+
+    if client.collection_exists(collection_name):
+        logger.info(
+            f"Collection '{collection_name}' already exists"
         )
+        return
 
-def is_collection_empty(collection_name: str) -> bool:
-    try:
-        info = client.get_collection(collection_name)
-        return info.points_count == 0
-    except:
-        return True
+    client.create_collection(
+        collection_name=collection_name,
+        vectors_config=VectorParams(
+            size=vector_size,
+            distance=Distance.COSINE,
+        ),
+    )
 
-def add_points(collection_name, embeddings, chunks, metadata):
+    logger.info(
+        f"Created collection '{collection_name}'"
+    )
+
+
+def add_points(
+    collection_name: str,
+    embeddings: list[list[float]],
+    chunks: list[Document],
+) -> None:
+
     points = []
-    for i in range(len(embeddings)):
-        chunk = chunks[i]
+
+    for embedding, chunk in zip(embeddings, chunks):
+
         points.append(
             PointStruct(
                 id=str(uuid.uuid4()),
-                vector=embeddings[i],
+                vector=embedding,
                 payload={
                     "text": chunk.page_content,
-                    # Ensure this key matches what evident_rag.py looks for!
-                    "page": chunk.metadata.get("page", chunk.metadata.get("page_no", 0)),
-                    "source": chunk.metadata.get("source", "unknown")
-                }
+                    "source": chunk.metadata.get("source"),
+                    "page_no": chunk.metadata.get("page_no"),
+                },
             )
         )
-    client.upsert(collection_name=collection_name, points=points)
+
+    client.upsert(
+        collection_name=collection_name,
+        points=points,
+    )
+
+    logger.info(
+        f"Inserted {len(points)} points into "
+        f"'{collection_name}'"
+    )
+
+def collection_exists(collection_name: str) -> bool:
+    return client.collection_exists(collection_name)
