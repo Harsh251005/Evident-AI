@@ -14,20 +14,22 @@ Usage:
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from datasets import Dataset
 from ragas import evaluate
-from ragas.metrics.collections import (
+from ragas.metrics import (
     faithfulness,
     answer_relevancy,
     context_precision,
     context_recall,
 )
-from config.settings import settings
-from openai import OpenAI
-from ragas.llms import llm_factory,LangchainLLMWrapper
-from ragas.embeddings import OpenAIEmbeddings, LangchainEmbeddingsWrapper
+
+# RAGAS native OpenAI client — bypasses langchain_community entirely
+from ragas.llms import LlmProvider
+from ragas.embeddings import EmbeddingProvider
+
 from langchain_openai import ChatOpenAI
 
 from src.evaluation.models import (
@@ -41,7 +43,7 @@ from src.evaluation.models import (
 ANSWERS_PATH = Path("src/evaluation/generated_answers.json")
 REPORT_PATH  = Path("eval_report.json")
 
-# ── Thresholds (CI gate reads these via EvalReport.thresholds) ─────────────────
+# ── Thresholds ─────────────────────────────────────────────────────────────────
 RAGAS_THRESHOLD     = 0.70
 LLM_JUDGE_THRESHOLD = 0.75
 
@@ -60,9 +62,9 @@ Respond ONLY with a JSON object in this exact format (no markdown, no extra text
   "critique": "<one or two sentence explanation>"
 }}
 
-Question:       {question}
+Question:         {question}
 Generated Answer: {generated_answer}
-Ground Truth:   {ground_truth}
+Ground Truth:     {ground_truth}
 """
 
 
@@ -74,30 +76,24 @@ def load_generated_answers(path: Path) -> list[GeneratedAnswer]:
 
 
 def build_ragas_dataset(answers: list[GeneratedAnswer]) -> Dataset:
-    """Convert GeneratedAnswer list to the dict format RAGAS expects."""
     return Dataset.from_dict({
-        "question":          [a.question for a in answers],
-        "answer":            [a.generated_answer for a in answers],
-        "contexts":          [a.retrieved_contexts for a in answers],
-        "ground_truth":      [a.ground_truth for a in answers],
+        "question":     [a.question for a in answers],
+        "answer":       [a.generated_answer for a in answers],
+        "contexts":     [a.retrieved_contexts for a in answers],
+        "ground_truth": [a.ground_truth for a in answers],
     })
 
 
 def run_ragas(answers: list[GeneratedAnswer]) -> RAGASScores:
     print("[run_eval] Running RAGAS evaluation...")
 
-    llm = llm_factory(
-        settings.OPENAI_MODEL,
-        client=OpenAI(api_key=settings.OPENAI_API_KEY)
-    )
-
-    ragas_llm = LangchainLLMWrapper(llm)
-    ragas_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model="text-embedding-3-small"))
+    # Native RAGAS OpenAI provider — no langchain_community dependency
+    ragas_llm        = LlmProvider.openai(model="gpt-4.1-mini")
+    ragas_embeddings = EmbeddingProvider.openai(model="text-embedding-3-small")
 
     metrics = [faithfulness, answer_relevancy, context_precision, context_recall]
     for m in metrics:
         m.llm = ragas_llm
-        # answer_relevancy also needs embeddings
         if hasattr(m, "embeddings"):
             m.embeddings = ragas_embeddings
 
@@ -116,9 +112,12 @@ def run_ragas(answers: list[GeneratedAnswer]) -> RAGASScores:
     return scores
 
 
-def run_llm_judge(answers: list[GeneratedAnswer], llm: ChatOpenAI) -> list[LLMJudgeResult]:
+def run_llm_judge(answers: list[GeneratedAnswer]) -> list[LLMJudgeResult]:
     print("[run_eval] Running LLM-as-Judge evaluation...")
-    results: list[LLMJudgeResult] = []
+
+    # Use LangChain's ChatOpenAI directly — no RAGAS wrappers needed here
+    llm     = ChatOpenAI(model="gpt-4.1-mini", temperature=0)
+    results : list[LLMJudgeResult] = []
 
     for i, a in enumerate(answers, start=1):
         print(f"[run_eval] Judging ({i}/{len(answers)}) {a.question[:60]}...")
@@ -132,6 +131,8 @@ def run_llm_judge(answers: list[GeneratedAnswer], llm: ChatOpenAI) -> list[LLMJu
         try:
             response = llm.invoke(prompt)
             raw      = response.content.strip()
+            # Strip markdown fences if GPT wraps response anyway
+            raw      = raw.replace("```json", "").replace("```", "").strip()
             parsed   = json.loads(raw)
             score    = float(parsed["score"])
             critique = str(parsed["critique"])
@@ -159,18 +160,8 @@ def run_llm_judge(answers: list[GeneratedAnswer], llm: ChatOpenAI) -> list[LLMJu
 
 def main():
     parser = argparse.ArgumentParser(description="Run RAGAS + LLM-as-Judge evaluation.")
-    parser.add_argument(
-        "--answers",
-        type=Path,
-        default=ANSWERS_PATH,
-        help="Path to generated_answers.json",
-    )
-    parser.add_argument(
-        "--report",
-        type=Path,
-        default=REPORT_PATH,
-        help="Where to write eval_report.json",
-    )
+    parser.add_argument("--answers", type=Path, default=ANSWERS_PATH)
+    parser.add_argument("--report",  type=Path, default=REPORT_PATH)
     args = parser.parse_args()
 
     if not args.answers.exists():
@@ -179,36 +170,29 @@ def main():
             "Run `python -m src.evaluation.run_generation` first."
         )
 
-    # Single LLM instance reused for both RAGAS and Judge
-    llm = ChatOpenAI(
-        model=settings.OPENAI_MODEL,
-        temperature=0,
-        api_key=settings.OPENAI_API_KEY,
-    )
+    answers       = load_generated_answers(args.answers)
+    ragas_scores  = run_ragas(answers)
+    judge_results = run_llm_judge(answers)
 
-    answers        = load_generated_answers(args.answers)
-    ragas_scores   = run_ragas(answers, llm)
-    judge_results  = run_llm_judge(answers, llm)
-
-    judge_mean     = round(sum(r.score for r in judge_results) / len(judge_results), 4)
-    gate_passed    = (
+    judge_mean  = round(sum(r.score for r in judge_results) / len(judge_results), 4)
+    gate_passed = (
         ragas_scores.composite >= RAGAS_THRESHOLD
-        and judge_mean          >= LLM_JUDGE_THRESHOLD
+        and judge_mean         >= LLM_JUDGE_THRESHOLD
     )
 
     report = EvalReport(
-        ragas_scores        = ragas_scores,
-        ragas_composite     = ragas_scores.composite,
-        llm_judge_mean_score= judge_mean,
-        llm_judge_results   = judge_results,
-        total_samples       = len(answers),
-        quality_gate_passed = gate_passed,
-        thresholds          = {
+        ragas_scores         = ragas_scores,
+        ragas_composite      = ragas_scores.composite,
+        llm_judge_mean_score = judge_mean,
+        llm_judge_results    = judge_results,
+        total_samples        = len(answers),
+        quality_gate_passed  = gate_passed,
+        thresholds           = {
             "ragas_composite": RAGAS_THRESHOLD,
             "llm_judge_mean":  LLM_JUDGE_THRESHOLD,
         },
         metadata={
-            "model":    "gpt-4.1-mini",
+            "model":        "gpt-4.1-mini",
             "answers_file": str(args.answers),
         },
     )
@@ -232,7 +216,6 @@ def main():
     print("=" * 50)
     print(f"\n[run_eval] Report saved → {args.report}")
 
-    # Exit code 1 so CI fails the pipeline when gate doesn't pass
     if not gate_passed:
         raise SystemExit(1)
 
