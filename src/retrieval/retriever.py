@@ -1,10 +1,12 @@
 from langchain_core.documents import Document
+from langsmith import traceable
 
 from src.retrieval.vector_search import vector_search
 from src.retrieval.bm25 import bm25_search
 from src.retrieval.hybrid import hybrid_search
 
 
+@traceable(name="retrieval")
 def retrieve(
     query: str,
     collection_name: str,

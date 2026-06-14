@@ -23,10 +23,3 @@ def answer_query(
     )
 
     return answer
-
-result = answer_query(
-    query="What is langchain?",
-    collection_name="langchain_demo_5b8dde8f"
-)
-
-print(result)

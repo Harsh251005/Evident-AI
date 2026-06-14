@@ -55,11 +55,14 @@ def vector_search(
 
     for point in results:
 
-        logger.info(
-            f"Retrieved chunk | score={point.score:.4f}"
-        )
-
         payload = point.payload
+
+        logger.info(
+            f"Retrieved chunk | "
+            f"source={payload.get('source')} | "
+            f"page={payload.get('page_no')} | "
+            f"score={point.score:.4f}"
+        )
 
         documents.append(
             Document(

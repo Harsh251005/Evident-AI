@@ -1,5 +1,6 @@
 from openai import OpenAI
 from langchain_core.documents import Document
+from langsmith import traceable
 
 from config.settings import settings
 from src.generation.prompt import (
@@ -13,6 +14,14 @@ logger = get_logger(__name__)
 client = OpenAI()
 
 
+@traceable(
+    name="generation",
+    run_type="llm",
+    metadata={
+        "ls_provider": settings.PROVIDER,
+        "ls_model": settings.OPENAI_MODEL,
+    }
+)
 def generate_answer(
     query: str,
     context_docs: list[Document],
