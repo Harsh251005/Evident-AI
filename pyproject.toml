@@ -9,6 +9,7 @@ dependencies = [
     "flashrank>=0.2.10",
     "hf-xet>=1.4.3",
     "langchain-core>=1.2.26",
+    "langchain-openai>=1.1.12",
     "langchain-text-splitters>=1.1.1",
     "langsmith>=0.7.25",
     "nltk>=3.9.4",

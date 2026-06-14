@@ -2,61 +2,67 @@ name: AI Quality Gate
 
 on:
   push:
-    branches: [ main ]
-    paths-ignore:
-      - 'README.md'
-      - '.gitignore'
-      - 'LICENSE'
+    branches: [main, dev]
   pull_request:
-    branches: [ main ]
-    paths-ignore:
-      - 'README.md'
-      - '.gitignore'
-      - 'LICENSE'
+    branches: [main]
 
 jobs:
-  evaluate_rag:
+  evaluate:
+    name: Run RAG Evaluation
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Set up Python
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Python setup ────────────────────────────────────────────────────
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+          cache: "pip"
 
+      # ── 3. Install dependencies ────────────────────────────────────────────
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          python -c "import nltk; nltk.download('stopwords')"
+        run: pip install -r requirements.txt
 
-      - name: Warm-up Ingestion (Generate BM25 Index)
+      # ── 4. Generate answers ────────────────────────────────────────────────
+      - name: Generate RAG answers
         env:
-          QDRANT_URL: ${{ secrets.QDRANT_URL }}
-          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          python -m main --file "data/sample_pdf/claudes-constitution_webPDF_26-02.02a.pdf" --ingest-only
+          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          QDRANT_URL:         ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY:     ${{ secrets.QDRANT_API_KEY }}
+          LANGSMITH_API_KEY:  ${{ secrets.LANGSMITH_API_KEY }}
+          LANGSMITH_TRACING:  "true"
+          LANGSMITH_ENDPOINT: "https://api.smith.langchain.com"
+          LANGSMITH_PROJECT:  "evident-ai-tracing"
+        run: python -m src.evaluation.run_generation --mode hybrid --top-k 5
 
-      - name: Run Golden Dataset Evaluation
+      # ── 5. Run evaluation ──────────────────────────────────────────────────
+      - name: Run RAGAS + LLM-as-Judge evaluation
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
-          QDRANT_URL: ${{ secrets.QDRANT_URL }}
-          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          LANGCHAIN_TRACING_V2: "true"
-        run: |
-          # 1. Run the evals to generate the experiment
-          python -m src.evaluation.run_evals > eval_output.txt
-          
-          # 2. Extract the Experiment Name from the output
-          EXP_NAME=$(grep "Experiment Name" eval_output.txt | awk '{print $NF}')
-          echo "LANGSMITH_PROJECT_NAME=$EXP_NAME" >> $GITHUB_ENV
+          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          QDRANT_URL:         ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY:     ${{ secrets.QDRANT_API_KEY }}
+          LANGSMITH_API_KEY:  ${{ secrets.LANGSMITH_API_KEY }}
+          LANGSMITH_TRACING:  "true"
+          LANGSMITH_ENDPOINT: "https://api.smith.langchain.com"
+          LANGSMITH_PROJECT:  "evident-ai-tracing"
+        run: python run_eval.py
 
-      - name: Enforcement Gate
-        env:
-          LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
+      # ── 6. Upload eval report as artifact ──────────────────────────────────
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval_report.json
+          retention-days: 30
+
+      # ── 7. Print report summary to CI logs ─────────────────────────────────
+      - name: Print eval report
+        if: always()
         run: |
-          # Fails build if citation accuracy is below threshold
-          python -m src.evaluation.eval_gate
+          echo "====== EVAL REPORT ======"
+          cat eval_report.json

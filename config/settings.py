@@ -1,56 +1,38 @@
 import os
-import yaml
 from dotenv import load_dotenv
 
-# 1. LOAD ENVIRONMENT VARIABLES FIRST
 load_dotenv()
 
-# --- DIRECTORIES (Dynamic Pathing) ---
-# This makes your project work on ANY computer, not just your D: drive
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-INDEX_DIR = os.path.join(DATA_DIR, "indices")
-PROMPTS_PATH = os.path.join(BASE_DIR, "config", "prompts.yaml")
-
-# --- SAMPLE DATA PATHS (Relative to project root) ---
-STORY_PDF_PATH = os.path.join(DATA_DIR, "sample_pdf", "Story.pdf")
-CLAUDE_CONSTITUTION_PDF_PATH = os.path.join(DATA_DIR, "sample_pdf", "claudes-constitution_webPDF_26-02.02a.pdf")
-
-# --- MODEL SETTINGS ---
-RERANKER_MODEL = "BAAI/bge-reranker-base"
-VECTOR_SIZE = 1536
-
-
-
-# --- RETRIEVAL SETTINGS ---
-INITIAL_K = 10        # Number of docs to fetch before reranking
-FINAL_K = 3          # Number of docs to send to the LLM after reranking
-SCORE_THRESHOLD = 0.50 # Minimum confidence to consider a chunk
-TOP_K = 3
-
-# --- LANGSMITH MONITORING ---
-# We pull these from .env for security. Defaulting tracing to 'false' if key is missing.
-LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "true")
-LANGCHAIN_ENDPOINT = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
-LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
-LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "EvidentAI-V1")
-
-# --- PROMPTS LOADER ---
-def load_prompts():
-    if not os.path.exists(PROMPTS_PATH):
-        raise FileNotFoundError(f"Prompts file not found at {PROMPTS_PATH}")
-    with open(PROMPTS_PATH, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-PROMPTS = load_prompts()
 
 class Settings:
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
+    PROVIDER: str = "openai"
     OPENAI_MODEL: str = "gpt-4.1-mini"
     EMBEDDING_MODEL: str = "text-embedding-3-small"
 
-    QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-    QDRANT_URL = os.getenv("QDRANT_URL")
+    QDRANT_API_KEY: str = os.getenv("QDRANT_API_KEY")
+    QDRANT_URL: str = os.getenv("QDRANT_URL")
+    QDRANT_COLLECTION_NAME: str = "claudes-constitution_webpdf_26-02.02a_09559b3b"
+
+    LANGSMITH_TRACING: str = os.getenv("LANGSMITH_TRACING")
+    LANGSMITH_ENDPOINT: str = os.getenv("LANGSMITH_ENDPOINT")
+    LANGSMITH_API_KEY: str = os.getenv("LANGSMITH_API_KEY")
+    LANGSMITH_PROJECT: str = os.getenv("LANGSMITH_PROJECT")
 
 
 settings = Settings()
+
+
+_env_map = {
+    "OPENAI_API_KEY":     settings.OPENAI_API_KEY,
+    "QDRANT_API_KEY":     settings.QDRANT_API_KEY,
+    "QDRANT_URL":         settings.QDRANT_URL,
+    "LANGSMITH_TRACING":  settings.LANGSMITH_TRACING,
+    "LANGSMITH_ENDPOINT": settings.LANGSMITH_ENDPOINT,
+    "LANGSMITH_API_KEY":  settings.LANGSMITH_API_KEY,
+    "LANGSMITH_PROJECT":  settings.LANGSMITH_PROJECT,
+}
+
+for _key, _value in _env_map.items():
+    if _value is not None:
+        os.environ[_key] = _value

@@ -92,3 +92,7 @@ uploads/
 
 *.bak
 *.swp
+
+# Reports
+eval_report.json
+src\evaluation\generated_answers.json

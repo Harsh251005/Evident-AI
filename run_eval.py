@@ -1,17 +1,240 @@
-from src.evaluation.evaluate import load_dataset, evaluate_system
-from main import setup_vector_store, setup_bm25
+"""
+Master evaluation runner for EvidentAI.
 
-PDF_PATH = r"D:\Harsh\Code\Resume Projects\EvidentAI\data\sample_pdf\claudes-constitution_webPDF_26-02.02a.pdf"
-DATASET_PATH = r"src/evaluation/dataset.json"
+What this does:
+  1. Loads generated_answers.json (produced by run_generation.py)
+  2. Runs RAGAS metrics  — faithfulness, answer_relevancy, context_precision, context_recall
+  3. Runs LLM-as-Judge   — GPT-4.1-mini critiques each answer against ground truth
+  4. Writes eval_report.json — consumed by the CI quality gate
 
+Usage:
+    python run_eval.py
+    python run_eval.py --answers src/evaluation/generated_answers.json
+"""
+
+import argparse
+import json
+from pathlib import Path
+
+from datasets import Dataset
+from ragas import evaluate
+from ragas.metrics.collections import (
+    faithfulness,
+    answer_relevancy,
+    context_precision,
+    context_recall,
+)
+from config.settings import settings
+from openai import OpenAI
+from ragas.llms import llm_factory,LangchainLLMWrapper
+from ragas.embeddings import OpenAIEmbeddings, LangchainEmbeddingsWrapper
+from langchain_openai import ChatOpenAI
+
+from src.evaluation.models import (
+    EvalReport,
+    GeneratedAnswer,
+    LLMJudgeResult,
+    RAGASScores,
+)
+
+# ── Paths ──────────────────────────────────────────────────────────────────────
+ANSWERS_PATH = Path("src/evaluation/generated_answers.json")
+REPORT_PATH  = Path("eval_report.json")
+
+# ── Thresholds (CI gate reads these via EvalReport.thresholds) ─────────────────
+RAGAS_THRESHOLD     = 0.70
+LLM_JUDGE_THRESHOLD = 0.75
+
+# ── LLM-as-Judge prompt ────────────────────────────────────────────────────────
+JUDGE_PROMPT = """You are an expert evaluator for a Retrieval-Augmented Generation (RAG) system.
+
+Given a question, a generated answer, and the ground truth answer, evaluate the quality
+of the generated answer on the following criteria:
+  - Factual accuracy compared to the ground truth
+  - Completeness — does it cover the key points?
+  - Conciseness — no hallucinated or irrelevant content
+
+Respond ONLY with a JSON object in this exact format (no markdown, no extra text):
+{{
+  "score": <float between 0.0 and 1.0>,
+  "critique": "<one or two sentence explanation>"
+}}
+
+Question:       {question}
+Generated Answer: {generated_answer}
+Ground Truth:   {ground_truth}
+"""
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def load_generated_answers(path: Path) -> list[GeneratedAnswer]:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return [GeneratedAnswer(**entry) for entry in raw]
+
+
+def build_ragas_dataset(answers: list[GeneratedAnswer]) -> Dataset:
+    """Convert GeneratedAnswer list to the dict format RAGAS expects."""
+    return Dataset.from_dict({
+        "question":          [a.question for a in answers],
+        "answer":            [a.generated_answer for a in answers],
+        "contexts":          [a.retrieved_contexts for a in answers],
+        "ground_truth":      [a.ground_truth for a in answers],
+    })
+
+
+def run_ragas(answers: list[GeneratedAnswer]) -> RAGASScores:
+    print("[run_eval] Running RAGAS evaluation...")
+
+    llm = llm_factory(
+        settings.OPENAI_MODEL,
+        client=OpenAI(api_key=settings.OPENAI_API_KEY)
+    )
+
+    ragas_llm = LangchainLLMWrapper(llm)
+    ragas_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model="text-embedding-3-small"))
+
+    metrics = [faithfulness, answer_relevancy, context_precision, context_recall]
+    for m in metrics:
+        m.llm = ragas_llm
+        # answer_relevancy also needs embeddings
+        if hasattr(m, "embeddings"):
+            m.embeddings = ragas_embeddings
+
+    dataset = build_ragas_dataset(answers)
+    result  = evaluate(dataset, metrics=metrics)
+    df      = result.to_pandas()
+
+    scores = RAGASScores(
+        faithfulness      = round(float(df["faithfulness"].mean()), 4),
+        answer_relevancy  = round(float(df["answer_relevancy"].mean()), 4),
+        context_precision = round(float(df["context_precision"].mean()), 4),
+        context_recall    = round(float(df["context_recall"].mean()), 4),
+    )
+
+    print(f"[run_eval] RAGAS composite: {scores.composite}")
+    return scores
+
+
+def run_llm_judge(answers: list[GeneratedAnswer], llm: ChatOpenAI) -> list[LLMJudgeResult]:
+    print("[run_eval] Running LLM-as-Judge evaluation...")
+    results: list[LLMJudgeResult] = []
+
+    for i, a in enumerate(answers, start=1):
+        print(f"[run_eval] Judging ({i}/{len(answers)}) {a.question[:60]}...")
+
+        prompt = JUDGE_PROMPT.format(
+            question=a.question,
+            generated_answer=a.generated_answer,
+            ground_truth=a.ground_truth,
+        )
+
+        try:
+            response = llm.invoke(prompt)
+            raw      = response.content.strip()
+            parsed   = json.loads(raw)
+            score    = float(parsed["score"])
+            critique = str(parsed["critique"])
+        except Exception as e:
+            print(f"[run_eval] Judge parse error on question {i}: {e}")
+            score    = 0.0
+            critique = "Evaluation failed."
+
+        results.append(
+            LLMJudgeResult(
+                question=a.question,
+                generated_answer=a.generated_answer,
+                ground_truth=a.ground_truth,
+                score=score,
+                critique=critique,
+            )
+        )
+
+    mean = round(sum(r.score for r in results) / len(results), 4)
+    print(f"[run_eval] LLM-Judge mean score: {mean}")
+    return results
+
+
+# ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
-    dataset = load_dataset(DATASET_PATH)
+    parser = argparse.ArgumentParser(description="Run RAGAS + LLM-as-Judge evaluation.")
+    parser.add_argument(
+        "--answers",
+        type=Path,
+        default=ANSWERS_PATH,
+        help="Path to generated_answers.json",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=REPORT_PATH,
+        help="Where to write eval_report.json",
+    )
+    args = parser.parse_args()
 
-    collection_name, texts, metadata = setup_vector_store(PDF_PATH)
-    bm25 = setup_bm25(texts, metadata)
+    if not args.answers.exists():
+        raise FileNotFoundError(
+            f"Generated answers not found at {args.answers}. "
+            "Run `python -m src.evaluation.run_generation` first."
+        )
 
-    evaluate_system(dataset, collection_name, bm25)
+    # Single LLM instance reused for both RAGAS and Judge
+    llm = ChatOpenAI(
+        model=settings.OPENAI_MODEL,
+        temperature=0,
+        api_key=settings.OPENAI_API_KEY,
+    )
+
+    answers        = load_generated_answers(args.answers)
+    ragas_scores   = run_ragas(answers, llm)
+    judge_results  = run_llm_judge(answers, llm)
+
+    judge_mean     = round(sum(r.score for r in judge_results) / len(judge_results), 4)
+    gate_passed    = (
+        ragas_scores.composite >= RAGAS_THRESHOLD
+        and judge_mean          >= LLM_JUDGE_THRESHOLD
+    )
+
+    report = EvalReport(
+        ragas_scores        = ragas_scores,
+        ragas_composite     = ragas_scores.composite,
+        llm_judge_mean_score= judge_mean,
+        llm_judge_results   = judge_results,
+        total_samples       = len(answers),
+        quality_gate_passed = gate_passed,
+        thresholds          = {
+            "ragas_composite": RAGAS_THRESHOLD,
+            "llm_judge_mean":  LLM_JUDGE_THRESHOLD,
+        },
+        metadata={
+            "model":    "gpt-4.1-mini",
+            "answers_file": str(args.answers),
+        },
+    )
+
+    args.report.write_text(
+        json.dumps(report.model_dump(), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    # ── Summary ────────────────────────────────────────────────────────────────
+    print("\n" + "=" * 50)
+    print("EVAL REPORT SUMMARY")
+    print("=" * 50)
+    print(f"  Faithfulness       : {ragas_scores.faithfulness}")
+    print(f"  Answer Relevancy   : {ragas_scores.answer_relevancy}")
+    print(f"  Context Precision  : {ragas_scores.context_precision}")
+    print(f"  Context Recall     : {ragas_scores.context_recall}")
+    print(f"  RAGAS Composite    : {ragas_scores.composite}  (threshold: {RAGAS_THRESHOLD})")
+    print(f"  LLM Judge Mean     : {judge_mean}  (threshold: {LLM_JUDGE_THRESHOLD})")
+    print(f"  Quality Gate       : {'✅ PASSED' if gate_passed else '❌ FAILED'}")
+    print("=" * 50)
+    print(f"\n[run_eval] Report saved → {args.report}")
+
+    # Exit code 1 so CI fails the pipeline when gate doesn't pass
+    if not gate_passed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
