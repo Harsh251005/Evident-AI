@@ -1,27 +1,74 @@
+from langchain_core.documents import Document
+from openai import OpenAI
+from qdrant_client.models import ScoredPoint
+
+from config.settings import settings
 from src.ingestion.vector_store import client
-from config import settings
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+openai_client = OpenAI()
 
 
-def vector_search(query_vector, collection_name, limit=settings.INITIAL_K):
+def embed_query(query: str) -> list[float]:
     """
-    Performs a dense vector search in Qdrant.
+    Generate embedding for a user query.
     """
-    results = client.query_points(
-        collection_name=collection_name,
-        query=query_vector,
-        limit=limit
+
+    response = openai_client.embeddings.create(
+        model=settings.EMBEDDING_MODEL,
+        input=query,
     )
 
-    formatted_docs = []
-    for point in results.points:
-        # Standardize output to match BM25 format
-        formatted_docs.append({
-            "text": point.payload.get("text", ""),
-            "metadata": {
-                "page": point.payload.get("page") or point.payload.get("page_no") or 0,
-                "source": point.payload.get("source", "Unknown PDF")
-            },
-            "score": float(point.score)
-        })
+    return response.data[0].embedding
 
-    return formatted_docs
+
+def vector_search(
+    query: str,
+    collection_name: str,
+    top_k: int = 5,
+) -> list[Document]:
+    """
+    Perform dense vector search against a qdrant collection.
+
+    Returns:
+        List[Document]
+    """
+
+    if not query.strip():
+        raise ValueError("Query cannot be empty")
+
+    logger.info(
+        f"Vector search | collection={collection_name} | top_k={top_k}"
+    )
+
+    query_embedding = embed_query(query)
+
+    results: list[ScoredPoint] = client.query_points(
+        collection_name=collection_name,
+        query=query_embedding,
+        limit=top_k,
+    ).points
+
+    documents = []
+
+    for point in results:
+        payload = point.payload
+
+        documents.append(
+            Document(
+                page_content=payload["text"],
+                metadata={
+                    "source": payload.get("source"),
+                    "page_no": payload.get("page_no"),
+                    "score": point.score,
+                },
+            )
+        )
+
+    logger.info(
+        f"Retrieved {len(documents)} chunks from {collection_name}"
+    )
+
+    return documents
