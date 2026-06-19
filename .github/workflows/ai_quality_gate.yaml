@@ -49,7 +49,11 @@ jobs:
           LANGSMITH_TRACING:  "true"
           LANGSMITH_ENDPOINT: "https://api.smith.langchain.com"
           LANGSMITH_PROJECT:  "evident-ai-tracing"
-        run: python run_eval.py
+        run: |
+          python run_eval.py
+          echo "exit code: $?"
+          pwd
+          ls -la
 
       # ── 6. Upload eval report as artifact ──────────────────────────────────
       - name: Upload eval report
