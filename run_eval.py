@@ -27,6 +27,24 @@ from openai import AsyncOpenAI
 # `python run_eval.py` standalone failed with a missing OPENAI_API_KEY.
 import config.settings  # noqa: F401
 
+# Must be set before ragas is imported. ragas decorates every metric's
+# ascore() with an analytics wrapper that does a *synchronous*
+# requests.post to https://t.explodinggradients.com — on the event loop
+# thread, inside otherwise-async scoring. That host no longer resolves.
+# requests' timeout (ragas sets 1s) does not cover DNS, so each call
+# blocks in getaddrinfo until the resolver gives up (~10s), and the
+# analytics call is wrapped in a silent() helper that swallows the error,
+# so nothing appears in any log.
+#
+# Locally this is invisible: systemd-resolved negatively caches the dead
+# name after the first lookup (measured: 4.5s once, then 0.001s), so only
+# question 1 pays. GitHub Actions runners don't cache it, so every metric
+# call stalls the loop ~10s — which is the entire reason CI timed out on
+# 100% of questions while the identical batch passed locally. Confirmed by
+# faulthandler stack dumps from a runner: 22 of 23 samples were parked in
+# urllib3's create_connection under ragas/_analytics.py.
+os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")
+
 # RAGAS native OpenAI provider (ragas.metrics.collections) — async,
 # instructor-based, bypasses langchain_community entirely
 from ragas.llms import llm_factory

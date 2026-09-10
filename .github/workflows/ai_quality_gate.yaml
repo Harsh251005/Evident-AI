@@ -60,6 +60,11 @@ jobs:
       # ── 6. Run evaluation ──────────────────────────────────────────────────
       - name: Run RAGAS + LLM-as-Judge evaluation
         env:
+          # Belt and braces — run_eval.py sets this too. Stops ragas from
+          # making a blocking, silently-failing analytics call to a dead
+          # host on the event loop thread before every metric. See the
+          # comment in run_eval.py.
+          RAGAS_DO_NOT_TRACK: "true"
           OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
           QDRANT_URL:         ${{ secrets.QDRANT_URL }}
           QDRANT_API_KEY:     ${{ secrets.QDRANT_API_KEY }}
