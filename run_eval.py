@@ -89,30 +89,60 @@ def load_generated_answers(path: Path) -> list[GeneratedAnswer]:
     return [GeneratedAnswer(**entry) for entry in raw]
 
 
+_ZERO_SCORE = {
+    "faithfulness": 0.0,
+    "answer_relevancy": 0.0,
+    "context_precision": 0.0,
+    "context_recall": 0.0,
+}
+
+
 async def _score_one(metrics: dict, answer: GeneratedAnswer) -> dict:
-    faithfulness_result, relevancy_result, precision_result, recall_result = (
-        await asyncio.gather(
-            metrics["faithfulness"].ascore(
-                user_input=answer.question,
-                response=answer.generated_answer,
-                retrieved_contexts=answer.retrieved_contexts,
-            ),
-            metrics["answer_relevancy"].ascore(
-                user_input=answer.question,
-                response=answer.generated_answer,
-            ),
-            metrics["context_precision"].ascore(
-                user_input=answer.question,
-                reference=answer.ground_truth,
-                retrieved_contexts=answer.retrieved_contexts,
-            ),
-            metrics["context_recall"].ascore(
-                user_input=answer.question,
-                retrieved_contexts=answer.retrieved_contexts,
-                reference=answer.ground_truth,
-            ),
+    # A question whose generation/retrieval failed upstream (empty answer or
+    # no retrieved context, after generate_answers.py's own retries were
+    # exhausted) has no faithfulness/relevancy to measure — RAGAS's
+    # Faithfulness metric hard-raises on an empty response rather than
+    # scoring it. Treat it as a real 0 for this question instead of
+    # crashing the entire batch over one bad sample.
+    if not answer.generated_answer or not answer.retrieved_contexts:
+        print(
+            f"[run_eval] WARNING: empty answer/context for "
+            f"'{answer.question[:60]}...' — scoring as 0, not evaluating"
         )
-    )
+        return dict(_ZERO_SCORE)
+
+    try:
+        faithfulness_result, relevancy_result, precision_result, recall_result = (
+            await asyncio.gather(
+                metrics["faithfulness"].ascore(
+                    user_input=answer.question,
+                    response=answer.generated_answer,
+                    retrieved_contexts=answer.retrieved_contexts,
+                ),
+                metrics["answer_relevancy"].ascore(
+                    user_input=answer.question,
+                    response=answer.generated_answer,
+                ),
+                metrics["context_precision"].ascore(
+                    user_input=answer.question,
+                    reference=answer.ground_truth,
+                    retrieved_contexts=answer.retrieved_contexts,
+                ),
+                metrics["context_recall"].ascore(
+                    user_input=answer.question,
+                    retrieved_contexts=answer.retrieved_contexts,
+                    reference=answer.ground_truth,
+                ),
+            )
+        )
+    except Exception as e:
+        # One question's RAGAS scoring shouldn't take down the other 49 —
+        # score it 0 and keep going, same as the empty-answer case above.
+        print(
+            f"[run_eval] WARNING: RAGAS scoring failed for "
+            f"'{answer.question[:60]}...': {e} — scoring as 0"
+        )
+        return dict(_ZERO_SCORE)
 
     return {
         "faithfulness": faithfulness_result.value,

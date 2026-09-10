@@ -1,5 +1,7 @@
+import time
+
 from langchain_core.documents import Document
-from openai import OpenAI
+from openai import OpenAI, APIError, APIConnectionError
 from qdrant_client.models import ScoredPoint
 
 from config.settings import settings
@@ -11,17 +13,26 @@ logger = get_logger(__name__)
 openai_client = OpenAI()
 
 
-def embed_query(query: str) -> list[float]:
+def embed_query(query: str, attempts: int = 3) -> list[float]:
     """
     Generate embedding for a user query.
     """
 
-    response = openai_client.embeddings.create(
-        model=settings.EMBEDDING_MODEL,
-        input=query,
-    )
+    for attempt in range(1, attempts + 1):
+        try:
+            response = openai_client.embeddings.create(
+                model=settings.EMBEDDING_MODEL,
+                input=query,
+            )
+            return response.data[0].embedding
 
-    return response.data[0].embedding
+        except (APIConnectionError, APIError):
+            if attempt == attempts:
+                raise
+            logger.warning(
+                f"Embedding call failed (attempt {attempt}/{attempts}) — retrying"
+            )
+            time.sleep(2 * attempt)
 
 
 def vector_search(
