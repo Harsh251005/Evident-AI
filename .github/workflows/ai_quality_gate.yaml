@@ -11,10 +11,12 @@ jobs:
     name: Run RAG Evaluation
     runs-on: ubuntu-latest
     # Hard ceiling — without this, a hung network call had no limit and ran
-    # for 30+ minutes before being cancelled by hand. Real runs finish in
-    # under 10 minutes; 15 gives headroom without letting a real hang burn
-    # the whole default 6-hour GitHub Actions cap.
-    timeout-minutes: 15
+    # for 30+ minutes before being cancelled by hand. Bumped from 15 to 20:
+    # the first bounded run hit exactly 15 min, which is suspiciously close
+    # to 10 sequential batches (RAGAS_CONCURRENCY=5, 50 questions) each
+    # taking close to the 90s per-question ceiling — needs headroom to see
+    # real behavior instead of always racing the wall clock.
+    timeout-minutes: 20
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────────────
@@ -53,7 +55,7 @@ jobs:
           LANGSMITH_TRACING:  "true"
           LANGSMITH_ENDPOINT: "https://api.smith.langchain.com"
           LANGSMITH_PROJECT:  "evident-ai-tracing"
-        run: python -m src.evaluation.run_generation --mode hybrid
+        run: python -u -m src.evaluation.run_generation --mode hybrid
 
       # ── 6. Run evaluation ──────────────────────────────────────────────────
       - name: Run RAGAS + LLM-as-Judge evaluation
@@ -66,7 +68,7 @@ jobs:
           LANGSMITH_ENDPOINT: "https://api.smith.langchain.com"
           LANGSMITH_PROJECT:  "evident-ai-tracing"
         run: |
-          python run_eval.py
+          python -u run_eval.py
           echo "exit code: $?"
           pwd
           ls -la
