@@ -69,7 +69,7 @@ This project served as an exploration of evaluation-driven AI development, where
 
 ## 🛠️ Tech Stack
 
-* **LLM**: OpenAI GPT-4.1-mini
+* **LLM**: OpenAI `gpt-5.6-luna` (generation) · `gpt-4.1-mini` (RAGAS + LLM-as-judge evaluators)
 * **Vector Database**: Qdrant (with hashed multi-tenancy)
 * **Retriever**: Hybrid (BM25 + Vector Search)
 * **Reranker**: FlashRank (CPU cross-encoder, `ms-marco-MiniLM-L-12-v2`)
@@ -118,17 +118,26 @@ This significantly improved citation quality while reducing unnecessary context 
 
 ---
 
-### Why GPT-4.1-mini?
+### Why this model split?
 
-GPT-4.1-mini provided a strong balance between:
+Generation runs on `gpt-5.6-luna`. The evaluation stack — RAGAS and the
+LLM-as-judge — is pinned separately to `gpt-4.1-mini`.
 
-- Response quality
-- Latency
-- Cost efficiency
+That split is deliberate, not accidental. `ragas==0.4.3`'s `agenerate()`
+sends the legacy `max_tokens` parameter, which `gpt-5.6-luna` rejects (it
+requires `max_completion_tokens`). This was confirmed by direct testing;
+upgrading `instructor` didn't resolve it and `ragas` has no newer release.
+So the evaluators stay on a model that accepts the older parameter, while
+generation uses the newer one.
 
-It's also the same model family used by the RAGAS and LLM-as-judge evaluators, keeping generation and evaluation consistent.
+Keeping the judge on a fixed, separate model has a side benefit: the
+evaluation baseline doesn't move when the generation model changes, so a
+change in `quality_score` reflects the pipeline rather than the grader.
 
-Since the focus of the project was retrieval quality rather than model capability, I prioritized improving retrieval performance before considering larger and more expensive language models — the generator only has to synthesize an answer from 4 already-reranked chunks, which a "mini" tier model handles well.
+Since the focus of the project was retrieval quality rather than model
+capability, I prioritized improving retrieval before reaching for larger
+and more expensive models — the generator only has to synthesize an answer
+from 4 already-reranked chunks.
 
 ---
 
