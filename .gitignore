@@ -96,3 +96,6 @@ uploads/
 # Reports
 eval_report.json
 src\evaluation\generated_answers.json
+
+# Local session handoff notes
+HANDOFF_CI_DEBUG.md
