@@ -59,7 +59,13 @@ QUALITY_THRESHOLD = 0.80
 CITATION_PATTERN = re.compile(r"\(Page\s+(\d+)\)", re.IGNORECASE)
 
 # How many questions to score concurrently against the RAGAS metrics.
-RAGAS_CONCURRENCY = 5
+# Each question fans out to up to 10 API calls (faithfulness x2,
+# relevancy x3, precision x4, recall x1), so concurrency 5 means up to ~50
+# simultaneous requests — plausible trigger for rate-limit-driven retry
+# cascades that individually blow past the per-question timeout, seen live
+# in CI ("RAGAS scoring timed out after 90.0s") but never locally (where
+# this only ever ran once, standalone, not alongside other API traffic).
+RAGAS_CONCURRENCY = 2
 
 # ── LLM-as-Judge prompt ────────────────────────────────────────────────────────
 JUDGE_PROMPT = """You are an expert evaluator for a Retrieval-Augmented Generation (RAG) system.
