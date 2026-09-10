@@ -10,7 +10,7 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-openai_client = OpenAI()
+openai_client = OpenAI(timeout=30.0)
 
 
 def embed_query(query: str, attempts: int = 3) -> list[float]:

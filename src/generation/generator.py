@@ -13,7 +13,7 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-client = OpenAI()
+client = OpenAI(timeout=60.0)
 
 _MAX_ATTEMPTS = 3
 

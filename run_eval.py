@@ -152,8 +152,17 @@ async def _score_one(metrics: dict, answer: GeneratedAnswer) -> dict:
     }
 
 
+# Hard ceiling per question — nothing in this codebase previously set any
+# request timeout on an OpenAI client, so a single hung network call had no
+# way to give up. A CI run cancelled after 30+ minutes proved this isn't
+# hypothetical. The client-level timeout below is the first line of
+# defense; this per-question wait_for is a second one, so even a library
+# bug that ignores the client timeout can't hang the whole batch.
+_PER_QUESTION_TIMEOUT = 90.0
+
+
 async def _run_ragas_async(answers: list[GeneratedAnswer]) -> list[dict]:
-    client = AsyncOpenAI()
+    client = AsyncOpenAI(timeout=45.0)
     llm = llm_factory("gpt-4.1-mini", client=client)
     embeddings = RagasOpenAIEmbeddings(client=client, model="text-embedding-3-small")
 
@@ -168,7 +177,18 @@ async def _run_ragas_async(answers: list[GeneratedAnswer]) -> list[dict]:
 
     async def bounded_score(answer: GeneratedAnswer) -> dict:
         async with semaphore:
-            return await _score_one(metrics, answer)
+            try:
+                return await asyncio.wait_for(
+                    _score_one(metrics, answer),
+                    timeout=_PER_QUESTION_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                print(
+                    f"[run_eval] WARNING: RAGAS scoring timed out after "
+                    f"{_PER_QUESTION_TIMEOUT}s for '{answer.question[:60]}...' "
+                    f"— scoring as 0"
+                )
+                return dict(_ZERO_SCORE)
 
     return await asyncio.gather(*(bounded_score(a) for a in answers))
 
@@ -196,7 +216,7 @@ def run_llm_judge(answers: list[GeneratedAnswer]) -> list[LLMJudgeResult]:
     print("[run_eval] Running LLM-as-Judge evaluation...")
 
     # Use LangChain's ChatOpenAI directly — no RAGAS wrappers needed here
-    llm     = ChatOpenAI(model="gpt-4.1-mini", temperature=0)
+    llm     = ChatOpenAI(model="gpt-4.1-mini", temperature=0, request_timeout=60.0)
     results : list[LLMJudgeResult] = []
 
     for i, a in enumerate(answers, start=1):

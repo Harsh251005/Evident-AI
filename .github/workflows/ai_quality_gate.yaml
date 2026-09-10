@@ -10,6 +10,11 @@ jobs:
   evaluate:
     name: Run RAG Evaluation
     runs-on: ubuntu-latest
+    # Hard ceiling — without this, a hung network call had no limit and ran
+    # for 30+ minutes before being cancelled by hand. Real runs finish in
+    # under 10 minutes; 15 gives headroom without letting a real hang burn
+    # the whole default 6-hour GitHub Actions cap.
+    timeout-minutes: 15
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────────────
