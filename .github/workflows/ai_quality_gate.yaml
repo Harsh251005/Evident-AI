@@ -10,6 +10,13 @@ jobs:
   evaluate:
     name: Run RAG Evaluation
     runs-on: ubuntu-latest
+    # Hard ceiling — without this, a hung network call had no limit and ran
+    # for 30+ minutes before being cancelled by hand. Bumped from 15 to 20:
+    # the first bounded run hit exactly 15 min, which is suspiciously close
+    # to 10 sequential batches (RAGAS_CONCURRENCY=5, 50 questions) each
+    # taking close to the 90s per-question ceiling — needs headroom to see
+    # real behavior instead of always racing the wall clock.
+    timeout-minutes: 20
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────────────
@@ -27,7 +34,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # ── 4. Generate answers ────────────────────────────────────────────────
+      # ── 4. Warm-up ingestion ───────────────────────────────────────────────
+      # Idempotent — ingest_document() skips re-ingesting if the collection
+      # already has points. Keeps the gate self-contained instead of quietly
+      # depending on a Qdrant collection someone populated by hand once.
+      - name: Ingest golden dataset PDF
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          QDRANT_URL:     ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+        run: python main.py "data/sample_pdf/claudes-constitution_webPDF_26-02.02a.pdf" --ingest-only
+
+      # ── 5. Generate answers ────────────────────────────────────────────────
       - name: Generate RAG answers
         env:
           OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
@@ -37,11 +55,16 @@ jobs:
           LANGSMITH_TRACING:  "true"
           LANGSMITH_ENDPOINT: "https://api.smith.langchain.com"
           LANGSMITH_PROJECT:  "evident-ai-tracing"
-        run: python -m src.evaluation.run_generation --mode hybrid --top-k 5
+        run: python -u -m src.evaluation.run_generation --mode hybrid
 
-      # ── 5. Run evaluation ──────────────────────────────────────────────────
+      # ── 6. Run evaluation ──────────────────────────────────────────────────
       - name: Run RAGAS + LLM-as-Judge evaluation
         env:
+          # Belt and braces — run_eval.py sets this too. Stops ragas from
+          # making a blocking, silently-failing analytics call to a dead
+          # host on the event loop thread before every metric. See the
+          # comment in run_eval.py.
+          RAGAS_DO_NOT_TRACK: "true"
           OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
           QDRANT_URL:         ${{ secrets.QDRANT_URL }}
           QDRANT_API_KEY:     ${{ secrets.QDRANT_API_KEY }}
@@ -50,12 +73,12 @@ jobs:
           LANGSMITH_ENDPOINT: "https://api.smith.langchain.com"
           LANGSMITH_PROJECT:  "evident-ai-tracing"
         run: |
-          python run_eval.py
+          python -u run_eval.py
           echo "exit code: $?"
           pwd
           ls -la
 
-      # ── 6. Upload eval report as artifact ──────────────────────────────────
+      # ── 7. Upload eval report as artifact ──────────────────────────────────
       - name: Upload eval report
         if: always()
         uses: actions/upload-artifact@v4
@@ -64,7 +87,7 @@ jobs:
           path: eval_report.json
           retention-days: 30
 
-      # ── 7. Print report summary to CI logs ─────────────────────────────────
+      # ── 8. Print report summary to CI logs ─────────────────────────────────
       - name: Print eval report
         if: always()
         run: |

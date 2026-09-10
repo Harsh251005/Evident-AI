@@ -6,15 +6,22 @@ EvidentAI is a high-precision Retrieval-Augmented Generation (RAG) system design
 
 ## 🚀 Performance Benchmarks
 
-Using a **Golden Dataset of 50 ground-truth questions** (Claude's Constitution Document), the system was optimized from a slow prototype into a production-ready engine.
+Measured on the **50-question golden dataset** (Claude's Constitution document), via a real evaluation run — `eval_report.json` generated locally and traced through [LangSmith](https://smith.langchain.com/public/4dbe49ea-ed0d-41cf-8dcc-881bfa25e172/d), not estimated.
 
-| Metric              | Initial Prototype        | Optimized System   | Improvement                |
-|---------------------|--------------------------|--------------------|----------------------------|
-| P99 Latency         | 43.36s                   | 8.57s              | ↓ 80.2%                    |
-| P50 Latency         | 33.15s                   | 6.14s              | ↓ 81.5%                    |
-| Citation Coverage   | 53%                      | 98%                | ↑ 85%                      |
-| Prompting Technique | Zero Shot Prompting      | One Shot Prompting | Improved Citation Accuracy |
-| Reranking           | BAAI/bge-reranker-v2-m3  | BGE-Reranker-Base  | Improved Latency           |
+| Metric | Score |
+|---|---|
+| Retrieval + generation latency (steady-state, per query) | ~4-5s |
+| Faithfulness (RAGAS) | 0.975 |
+| Answer Relevancy (RAGAS) | 0.784 |
+| Context Precision (RAGAS) | 0.873 |
+| Context Recall (RAGAS) | 0.900 |
+| **RAGAS Composite** | **0.883** |
+| LLM-as-Judge Mean | 0.792 |
+| Citation Coverage (grounded, non-fabricated) | 0.92 (46/50) |
+| **Composite Quality Score** | **0.865** |
+| CI Quality Gate (threshold ≥ 0.80) | ✅ Passed |
+
+*Last verified: 2026-09-10. Reproduce with `python -m src.evaluation.run_generation --mode hybrid && python run_eval.py`.*
 
 ---
 
@@ -34,13 +41,13 @@ EvidentAI follows a **Multi-Stage Retrieval & Refinement Pipeline** to ensure on
   * BM25 (keyword precision)
 
 * **Cross-Encoder Reranking**
-  Uses `BAAI/bge-reranker-base` to re-rank top results and select the most relevant chunks.
+  Uses FlashRank (`ms-marco-MiniLM-L-12-v2`, CPU-optimized ONNX) to re-score the top hybrid candidates and select the most relevant chunks.
 
 * **Context Optimization**
   Top 10 results → reranked → best 4 chunks selected ("Golden 4")
 
 * **Enforced Citation Generation**
-  One-shot prompting + Chain-of-Verification ensures every response is grounded with `(Page X)` references.
+  One-shot prompting requires every factual claim to be followed by a `(Page X)` citation. The evaluation pipeline verifies this at answer time — a citation only counts if the cited page number was actually retrieved for that question — via a `citation_coverage` metric (see CI/CD Quality Gate below).
 
 ---
 
@@ -62,10 +69,10 @@ This project served as an exploration of evaluation-driven AI development, where
 
 ## 🛠️ Tech Stack
 
-* **LLM**: OpenAI GPT-4o-mini
+* **LLM**: OpenAI GPT-4.1-mini
 * **Vector Database**: Qdrant (with hashed multi-tenancy)
 * **Retriever**: Hybrid (BM25 + Vector Search)
-* **Reranker**: BGE Cross-Encoder (HuggingFace)
+* **Reranker**: FlashRank (CPU cross-encoder, `ms-marco-MiniLM-L-12-v2`)
 * **Orchestration**: LangChain
 * **Observability & Evaluation**: LangSmith
 * **Frontend/UI**: Streamlit
@@ -111,15 +118,17 @@ This significantly improved citation quality while reducing unnecessary context 
 
 ---
 
-### Why GPT-4o-mini?
+### Why GPT-4.1-mini?
 
-GPT-4o-mini provided a strong balance between:
+GPT-4.1-mini provided a strong balance between:
 
 - Response quality
 - Latency
 - Cost efficiency
 
-Since the focus of the project was retrieval quality rather than model capability, I prioritized improving retrieval performance before considering larger and more expensive language models.
+It's also the same model family used by the RAGAS and LLM-as-judge evaluators, keeping generation and evaluation consistent.
+
+Since the focus of the project was retrieval quality rather than model capability, I prioritized improving retrieval performance before considering larger and more expensive language models — the generator only has to synthesize an answer from 4 already-reranked chunks, which a "mini" tier model handles well.
 
 ---
 
@@ -147,8 +156,8 @@ This includes:
 This project includes an automated **AI Quality Gate** to prevent low-quality deployments.
 
 * **Evaluation Suite**: 50 ground-truth questions
-* **Threshold**: Minimum 80% citation coverage required
-* **Failure Condition**: Build fails if threshold is not met
+* **Metrics**: RAGAS (faithfulness, answer relevancy, context precision, context recall), LLM-as-judge, and citation coverage — averaged into a single `quality_score`
+* **Threshold**: Build fails if `quality_score` falls below **0.80**
 * **Monitoring**: All runs are logged in LangSmith for debugging and traceability
 
 ---
@@ -210,8 +219,8 @@ Initial versions frequently generated answers without sufficient grounding.
 To address this, I introduced:
 
 - One-shot prompting
-- Citation enforcement
-- Chain-of-Verification techniques
+- A citation format enforced in the system prompt (`(Page X)` after every factual claim)
+- A `citation_coverage` evaluation metric that rejects a citation unless the cited page was actually retrieved for that question — catching both missing and fabricated citations
 
 These changes significantly improved citation coverage.
 
@@ -246,8 +255,12 @@ Create a `.env` file:
 
 ```env
 OPENAI_API_KEY=your_key
-LANGCHAIN_API_KEY=your_key
 QDRANT_URL=http://localhost:6333
+QDRANT_API_KEY=your_key
+LANGSMITH_API_KEY=your_key
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_PROJECT=evident-ai-tracing
 ```
 
 ### 4. Run the Application
@@ -263,13 +276,14 @@ streamlit run app.py
 Run the full evaluation pipeline and quality gate:
 
 ```bash
-# Step 1: Run evaluations
-python -m src.evaluation.run_evals
+# Step 1: Generate answers over the 50-question golden dataset
+python -m src.evaluation.run_generation --mode hybrid
 
-# Step 2: Run quality gate
-$env:LANGSMITH_PROJECT_NAME="your_experiment_name"
-python -m src.evaluation.eval_gate
+# Step 2: Run RAGAS + LLM-as-judge + citation coverage, and enforce the quality gate
+python run_eval.py
 ```
+
+This is the same sequence the CI workflow (`.github/workflows/ai_quality_gate.yaml`) runs on every push and PR to `main`.
 
 ---
 

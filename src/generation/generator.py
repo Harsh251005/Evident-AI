@@ -1,4 +1,6 @@
-from openai import OpenAI
+import time
+
+from openai import OpenAI, APIError, APIConnectionError
 from langchain_core.documents import Document
 from langsmith import traceable
 
@@ -11,7 +13,9 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-client = OpenAI()
+client = OpenAI(timeout=60.0)
+
+_MAX_ATTEMPTS = 3
 
 
 @traceable(
@@ -46,21 +50,38 @@ def generate_answer(
         f"{len(context_docs)} retrieved chunks"
     )
 
-    try:
-        response = client.responses.create(
-            model=settings.OPENAI_MODEL,
-            instructions=SYSTEM_PROMPT,
-            input=user_prompt,
-        )
+    last_error = None
 
-        answer = response.output_text.strip()
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            response = client.responses.create(
+                model=settings.OPENAI_MODEL,
+                instructions=SYSTEM_PROMPT,
+                input=user_prompt,
+            )
 
-        logger.info("Answer generated successfully")
+            answer = response.output_text.strip()
 
-        return answer
+            logger.info("Answer generated successfully")
 
-    except Exception as e:
-        logger.exception("Generation failed")
-        raise RuntimeError(
-            "Failed to generate answer"
-        ) from e
+            return answer
+
+        except (APIConnectionError, APIError) as e:
+            last_error = e
+            if attempt == _MAX_ATTEMPTS:
+                break
+            logger.warning(
+                f"Generation failed (attempt {attempt}/{_MAX_ATTEMPTS}): {e} — retrying"
+            )
+            time.sleep(2 * attempt)
+
+        except Exception as e:
+            logger.exception("Generation failed")
+            raise RuntimeError(
+                "Failed to generate answer"
+            ) from e
+
+    logger.exception("Generation failed after retries")
+    raise RuntimeError(
+        "Failed to generate answer"
+    ) from last_error

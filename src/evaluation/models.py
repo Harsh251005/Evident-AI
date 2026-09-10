@@ -26,6 +26,10 @@ class GeneratedAnswer(BaseModel):
         default_factory=list,
         description="Context chunks retrieved by the pipeline — required by RAGAS",
     )
+    retrieved_pages: list[int] = Field(
+        default_factory=list,
+        description="Page numbers of the retrieved chunks — used to validate citations",
+    )
 
 
 class RAGASScores(BaseModel):
@@ -65,12 +69,25 @@ class EvalReport(BaseModel):
     ragas_composite: float
     llm_judge_mean_score: float
     llm_judge_results: list[LLMJudgeResult]
+    citation_coverage: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of answers with at least one citation grounded "
+        "in a retrieved page",
+    )
+    quality_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Mean of ragas_composite, llm_judge_mean_score and "
+        "citation_coverage — the single number the CI gate checks",
+    )
     total_samples: int
     quality_gate_passed: bool = False
     thresholds: dict = Field(
         default_factory=lambda: {
-            "ragas_composite": 0.70,
-            "llm_judge_mean": 0.75,
+            "quality_score": 0.80,
         }
     )
     metadata: Optional[dict] = None

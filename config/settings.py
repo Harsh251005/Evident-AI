@@ -7,12 +7,22 @@ load_dotenv()
 class Settings:
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
     PROVIDER: str = "openai"
-    OPENAI_MODEL: str = "gpt-4.1-mini"
+    # Generation only. The RAGAS + LLM-as-judge eval pipeline (run_eval.py)
+    # is pinned separately to gpt-4.1-mini — ragas==0.4.3's agenerate() sends
+    # the legacy `max_tokens` param, which gpt-5.6-luna rejects (requires
+    # `max_completion_tokens`), a library-level incompatibility with no fix
+    # available upstream yet. Confirmed via a direct RAGAS call, not assumed.
+    OPENAI_MODEL: str = "gpt-5.6-luna"
     EMBEDDING_MODEL: str = "text-embedding-3-small"
 
     QDRANT_API_KEY: str = os.getenv("QDRANT_API_KEY")
     QDRANT_URL: str = os.getenv("QDRANT_URL")
     QDRANT_COLLECTION_NAME: str = "claudes-constitution_webpdf_26-02.02a_09559b3b"
+
+    # Reranking — cross-encoder re-scoring of hybrid retrieval candidates
+    RERANKER_MODEL: str = "ms-marco-MiniLM-L-12-v2"  # via FlashRank, CPU-optimized
+    INITIAL_K: int = 10   # candidates fetched before reranking
+    FINAL_K: int = 4      # "Golden 4" — chunks sent to the LLM after reranking
 
     LANGSMITH_TRACING: str = os.getenv("LANGSMITH_TRACING")
     LANGSMITH_ENDPOINT: str = os.getenv("LANGSMITH_ENDPOINT")

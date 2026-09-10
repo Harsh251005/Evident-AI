@@ -13,22 +13,48 @@ Usage:
 """
 
 import argparse
+import asyncio
 import json
 import os
+import re
 from pathlib import Path
 
-from datasets import Dataset
-from ragas import evaluate
-from ragas.metrics import (
-    faithfulness,
-    answer_relevancy,
-    context_precision,
-    context_recall,
-)
+from openai import AsyncOpenAI
 
-# RAGAS native OpenAI client — bypasses langchain_community entirely
-from ragas.llms import LlmProvider
-from ragas.embeddings import EmbeddingProvider
+# Loads .env into os.environ — every other entrypoint (main.py,
+# run_generation.py, app.py) gets this transitively by importing
+# config.settings somewhere in their chain; this script didn't, so running
+# `python run_eval.py` standalone failed with a missing OPENAI_API_KEY.
+import config.settings  # noqa: F401
+
+# Must be set before ragas is imported. ragas decorates every metric's
+# ascore() with an analytics wrapper that does a *synchronous*
+# requests.post to https://t.explodinggradients.com — on the event loop
+# thread, inside otherwise-async scoring. That host no longer resolves.
+# requests' timeout (ragas sets 1s) does not cover DNS, so each call
+# blocks in getaddrinfo until the resolver gives up (~10s), and the
+# analytics call is wrapped in a silent() helper that swallows the error,
+# so nothing appears in any log.
+#
+# Locally this is invisible: systemd-resolved negatively caches the dead
+# name after the first lookup (measured: 4.5s once, then 0.001s), so only
+# question 1 pays. GitHub Actions runners don't cache it, so every metric
+# call stalls the loop ~10s — which is the entire reason CI timed out on
+# 100% of questions while the identical batch passed locally. Confirmed by
+# faulthandler stack dumps from a runner: 22 of 23 samples were parked in
+# urllib3's create_connection under ragas/_analytics.py.
+os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")
+
+# RAGAS native OpenAI provider (ragas.metrics.collections) — async,
+# instructor-based, bypasses langchain_community entirely
+from ragas.llms import llm_factory
+from ragas.embeddings import OpenAIEmbeddings as RagasOpenAIEmbeddings
+from ragas.metrics.collections import (
+    Faithfulness,
+    AnswerRelevancy,
+    ContextPrecision,
+    ContextRecall,
+)
 
 from langchain_openai import ChatOpenAI
 
@@ -44,8 +70,20 @@ ANSWERS_PATH = Path("src/evaluation/generated_answers.json")
 REPORT_PATH  = Path("eval_report.json")
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
-RAGAS_THRESHOLD     = 0.70
-LLM_JUDGE_THRESHOLD = 0.75
+# The CI quality gate checks a single composite quality_score (mean of RAGAS
+# composite, LLM-judge mean, and citation coverage) against QUALITY_THRESHOLD.
+QUALITY_THRESHOLD = 0.80
+
+CITATION_PATTERN = re.compile(r"\(Page\s+(\d+)\)", re.IGNORECASE)
+
+# How many questions to score concurrently against the RAGAS metrics.
+# Each question fans out to up to 10 API calls (faithfulness x2,
+# relevancy x3, precision x4, recall x1), so concurrency 5 means up to ~50
+# simultaneous requests — plausible trigger for rate-limit-driven retry
+# cascades that individually blow past the per-question timeout, seen live
+# in CI ("RAGAS scoring timed out after 90.0s") but never locally (where
+# this only ever ran once, standalone, not alongside other API traffic).
+RAGAS_CONCURRENCY = 2
 
 # ── LLM-as-Judge prompt ────────────────────────────────────────────────────────
 JUDGE_PROMPT = """You are an expert evaluator for a Retrieval-Augmented Generation (RAG) system.
@@ -75,37 +113,123 @@ def load_generated_answers(path: Path) -> list[GeneratedAnswer]:
     return [GeneratedAnswer(**entry) for entry in raw]
 
 
-def build_ragas_dataset(answers: list[GeneratedAnswer]) -> Dataset:
-    return Dataset.from_dict({
-        "question":     [a.question for a in answers],
-        "answer":       [a.generated_answer for a in answers],
-        "contexts":     [a.retrieved_contexts for a in answers],
-        "ground_truth": [a.ground_truth for a in answers],
-    })
+_ZERO_SCORE = {
+    "faithfulness": 0.0,
+    "answer_relevancy": 0.0,
+    "context_precision": 0.0,
+    "context_recall": 0.0,
+}
+
+
+async def _score_one(metrics: dict, answer: GeneratedAnswer) -> dict:
+    # A question whose generation/retrieval failed upstream (empty answer or
+    # no retrieved context, after generate_answers.py's own retries were
+    # exhausted) has no faithfulness/relevancy to measure — RAGAS's
+    # Faithfulness metric hard-raises on an empty response rather than
+    # scoring it. Treat it as a real 0 for this question instead of
+    # crashing the entire batch over one bad sample.
+    if not answer.generated_answer or not answer.retrieved_contexts:
+        print(
+            f"[run_eval] WARNING: empty answer/context for "
+            f"'{answer.question[:60]}...' — scoring as 0, not evaluating"
+        )
+        return dict(_ZERO_SCORE)
+
+    try:
+        faithfulness_result, relevancy_result, precision_result, recall_result = (
+            await asyncio.gather(
+                metrics["faithfulness"].ascore(
+                    user_input=answer.question,
+                    response=answer.generated_answer,
+                    retrieved_contexts=answer.retrieved_contexts,
+                ),
+                metrics["answer_relevancy"].ascore(
+                    user_input=answer.question,
+                    response=answer.generated_answer,
+                ),
+                metrics["context_precision"].ascore(
+                    user_input=answer.question,
+                    reference=answer.ground_truth,
+                    retrieved_contexts=answer.retrieved_contexts,
+                ),
+                metrics["context_recall"].ascore(
+                    user_input=answer.question,
+                    retrieved_contexts=answer.retrieved_contexts,
+                    reference=answer.ground_truth,
+                ),
+            )
+        )
+    except Exception as e:
+        # One question's RAGAS scoring shouldn't take down the other 49 —
+        # score it 0 and keep going, same as the empty-answer case above.
+        print(
+            f"[run_eval] WARNING: RAGAS scoring failed for "
+            f"'{answer.question[:60]}...': {e} — scoring as 0"
+        )
+        return dict(_ZERO_SCORE)
+
+    return {
+        "faithfulness": faithfulness_result.value,
+        "answer_relevancy": relevancy_result.value,
+        "context_precision": precision_result.value,
+        "context_recall": recall_result.value,
+    }
+
+
+# Hard ceiling per question — nothing in this codebase previously set any
+# request timeout on an OpenAI client, so a single hung network call had no
+# way to give up. A CI run cancelled after 30+ minutes proved this isn't
+# hypothetical. The client-level timeout below is the first line of
+# defense; this per-question wait_for is a second one, so even a library
+# bug that ignores the client timeout can't hang the whole batch.
+_PER_QUESTION_TIMEOUT = 90.0
+
+
+async def _run_ragas_async(answers: list[GeneratedAnswer]) -> list[dict]:
+    client = AsyncOpenAI(timeout=45.0)
+    llm = llm_factory("gpt-4.1-mini", client=client)
+    embeddings = RagasOpenAIEmbeddings(client=client, model="text-embedding-3-small")
+
+    metrics = {
+        "faithfulness": Faithfulness(llm=llm),
+        "answer_relevancy": AnswerRelevancy(llm=llm, embeddings=embeddings),
+        "context_precision": ContextPrecision(llm=llm),
+        "context_recall": ContextRecall(llm=llm),
+    }
+
+    semaphore = asyncio.Semaphore(RAGAS_CONCURRENCY)
+
+    async def bounded_score(answer: GeneratedAnswer) -> dict:
+        async with semaphore:
+            try:
+                return await asyncio.wait_for(
+                    _score_one(metrics, answer),
+                    timeout=_PER_QUESTION_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                print(
+                    f"[run_eval] WARNING: RAGAS scoring timed out after "
+                    f"{_PER_QUESTION_TIMEOUT}s for '{answer.question[:60]}...' "
+                    f"— scoring as 0"
+                )
+                return dict(_ZERO_SCORE)
+
+    return await asyncio.gather(*(bounded_score(a) for a in answers))
 
 
 def run_ragas(answers: list[GeneratedAnswer]) -> RAGASScores:
     print("[run_eval] Running RAGAS evaluation...")
 
-    # Native RAGAS OpenAI provider — no langchain_community dependency
-    ragas_llm        = LlmProvider.openai(model="gpt-4.1-mini")
-    ragas_embeddings = EmbeddingProvider.openai(model="text-embedding-3-small")
+    per_question = asyncio.run(_run_ragas_async(answers))
 
-    metrics = [faithfulness, answer_relevancy, context_precision, context_recall]
-    for m in metrics:
-        m.llm = ragas_llm
-        if hasattr(m, "embeddings"):
-            m.embeddings = ragas_embeddings
-
-    dataset = build_ragas_dataset(answers)
-    result  = evaluate(dataset, metrics=metrics)
-    df      = result.to_pandas()
+    def _mean(key: str) -> float:
+        return round(sum(r[key] for r in per_question) / len(per_question), 4)
 
     scores = RAGASScores(
-        faithfulness      = round(float(df["faithfulness"].mean()), 4),
-        answer_relevancy  = round(float(df["answer_relevancy"].mean()), 4),
-        context_precision = round(float(df["context_precision"].mean()), 4),
-        context_recall    = round(float(df["context_recall"].mean()), 4),
+        faithfulness      = _mean("faithfulness"),
+        answer_relevancy  = _mean("answer_relevancy"),
+        context_precision = _mean("context_precision"),
+        context_recall    = _mean("context_recall"),
     )
 
     print(f"[run_eval] RAGAS composite: {scores.composite}")
@@ -116,7 +240,7 @@ def run_llm_judge(answers: list[GeneratedAnswer]) -> list[LLMJudgeResult]:
     print("[run_eval] Running LLM-as-Judge evaluation...")
 
     # Use LangChain's ChatOpenAI directly — no RAGAS wrappers needed here
-    llm     = ChatOpenAI(model="gpt-4.1-mini", temperature=0)
+    llm     = ChatOpenAI(model="gpt-4.1-mini", temperature=0, request_timeout=60.0)
     results : list[LLMJudgeResult] = []
 
     for i, a in enumerate(answers, start=1):
@@ -156,6 +280,35 @@ def run_llm_judge(answers: list[GeneratedAnswer]) -> list[LLMJudgeResult]:
     return results
 
 
+def compute_citation_coverage(answers: list[GeneratedAnswer]) -> float:
+    """
+    Fraction of answers that cite at least one page number, where every
+    cited page number is actually among the retrieved pages for that answer.
+
+    A missing citation, or a citation pointing at a page that was never
+    retrieved (a fabricated reference), counts as uncovered.
+    """
+    print("[run_eval] Computing citation coverage...")
+
+    covered = 0
+
+    for a in answers:
+        cited_pages = {
+            int(page) for page in CITATION_PATTERN.findall(a.generated_answer)
+        }
+
+        is_covered = bool(cited_pages) and cited_pages.issubset(
+            set(a.retrieved_pages)
+        )
+
+        if is_covered:
+            covered += 1
+
+    coverage = round(covered / len(answers), 4)
+    print(f"[run_eval] Citation coverage: {coverage} ({covered}/{len(answers)})")
+    return coverage
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -170,26 +323,29 @@ def main():
             "Run `python -m src.evaluation.run_generation` first."
         )
 
-    answers       = load_generated_answers(args.answers)
-    ragas_scores  = run_ragas(answers)
-    judge_results = run_llm_judge(answers)
+    answers           = load_generated_answers(args.answers)
+    ragas_scores      = run_ragas(answers)
+    judge_results     = run_llm_judge(answers)
+    citation_coverage = compute_citation_coverage(answers)
 
-    judge_mean  = round(sum(r.score for r in judge_results) / len(judge_results), 4)
-    gate_passed = (
-        ragas_scores.composite >= RAGAS_THRESHOLD
-        and judge_mean         >= LLM_JUDGE_THRESHOLD
+    judge_mean    = round(sum(r.score for r in judge_results) / len(judge_results), 4)
+    quality_score = round(
+        (ragas_scores.composite + judge_mean + citation_coverage) / 3,
+        4,
     )
+    gate_passed = quality_score >= QUALITY_THRESHOLD
 
     report = EvalReport(
         ragas_scores         = ragas_scores,
         ragas_composite      = ragas_scores.composite,
         llm_judge_mean_score = judge_mean,
         llm_judge_results    = judge_results,
+        citation_coverage    = citation_coverage,
+        quality_score        = quality_score,
         total_samples        = len(answers),
         quality_gate_passed  = gate_passed,
         thresholds           = {
-            "ragas_composite": RAGAS_THRESHOLD,
-            "llm_judge_mean":  LLM_JUDGE_THRESHOLD,
+            "quality_score": QUALITY_THRESHOLD,
         },
         metadata={
             "model":        "gpt-4.1-mini",
@@ -210,8 +366,10 @@ def main():
     print(f"  Answer Relevancy   : {ragas_scores.answer_relevancy}")
     print(f"  Context Precision  : {ragas_scores.context_precision}")
     print(f"  Context Recall     : {ragas_scores.context_recall}")
-    print(f"  RAGAS Composite    : {ragas_scores.composite}  (threshold: {RAGAS_THRESHOLD})")
-    print(f"  LLM Judge Mean     : {judge_mean}  (threshold: {LLM_JUDGE_THRESHOLD})")
+    print(f"  RAGAS Composite    : {ragas_scores.composite}")
+    print(f"  LLM Judge Mean     : {judge_mean}")
+    print(f"  Citation Coverage  : {citation_coverage}")
+    print(f"  Quality Score      : {quality_score}  (threshold: {QUALITY_THRESHOLD})")
     print(f"  Quality Gate       : {'✅ PASSED' if gate_passed else '❌ FAILED'}")
     print("=" * 50)
     print(f"\n[run_eval] Report saved → {args.report}")
