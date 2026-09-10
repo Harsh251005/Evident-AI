@@ -13,7 +13,8 @@ OUTPUT_PATH = Path(__file__).parent / "generated_answers.json"
 def generate_answers(
     collection_name: str,
     retrieval_mode: str = "hybrid",
-    top_k: int = 5,
+    top_k: int = None,
+    rerank: bool = True,
     output_path: Path = OUTPUT_PATH,
 ) -> list[GeneratedAnswer]:
     """
@@ -44,6 +45,7 @@ def generate_answers(
                 collection_name=collection_name,
                 mode=retrieval_mode,
                 top_k=top_k,
+                rerank=rerank,
             )
 
             # Generate — same call your pipeline makes
@@ -54,11 +56,17 @@ def generate_answers(
 
             # Extract page_content from each Document for RAGAS
             retrieved_contexts = [doc.page_content for doc in context_docs]
+            retrieved_pages = [
+                doc.metadata.get("page_no")
+                for doc in context_docs
+                if doc.metadata.get("page_no") is not None
+            ]
 
         except Exception as e:
             print(f"[generate_answers] ERROR on question {i}: {e}")
             answer = ""
             retrieved_contexts = []
+            retrieved_pages = []
 
         results.append(
             GeneratedAnswer(
@@ -67,6 +75,7 @@ def generate_answers(
                 source=qa.source,
                 generated_answer=answer,
                 retrieved_contexts=retrieved_contexts,
+                retrieved_pages=retrieved_pages,
             )
         )
 

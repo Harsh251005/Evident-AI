@@ -27,7 +27,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # ── 4. Generate answers ────────────────────────────────────────────────
+      # ── 4. Warm-up ingestion ───────────────────────────────────────────────
+      # Idempotent — ingest_document() skips re-ingesting if the collection
+      # already has points. Keeps the gate self-contained instead of quietly
+      # depending on a Qdrant collection someone populated by hand once.
+      - name: Ingest golden dataset PDF
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          QDRANT_URL:     ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+        run: python main.py "data/sample_pdf/claudes-constitution_webPDF_26-02.02a.pdf" --ingest-only
+
+      # ── 5. Generate answers ────────────────────────────────────────────────
       - name: Generate RAG answers
         env:
           OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
@@ -37,9 +48,9 @@ jobs:
           LANGSMITH_TRACING:  "true"
           LANGSMITH_ENDPOINT: "https://api.smith.langchain.com"
           LANGSMITH_PROJECT:  "evident-ai-tracing"
-        run: python -m src.evaluation.run_generation --mode hybrid --top-k 5
+        run: python -m src.evaluation.run_generation --mode hybrid
 
-      # ── 5. Run evaluation ──────────────────────────────────────────────────
+      # ── 6. Run evaluation ──────────────────────────────────────────────────
       - name: Run RAGAS + LLM-as-Judge evaluation
         env:
           OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
@@ -55,7 +66,7 @@ jobs:
           pwd
           ls -la
 
-      # ── 6. Upload eval report as artifact ──────────────────────────────────
+      # ── 7. Upload eval report as artifact ──────────────────────────────────
       - name: Upload eval report
         if: always()
         uses: actions/upload-artifact@v4
@@ -64,7 +75,7 @@ jobs:
           path: eval_report.json
           retention-days: 30
 
-      # ── 7. Print report summary to CI logs ─────────────────────────────────
+      # ── 8. Print report summary to CI logs ─────────────────────────────────
       - name: Print eval report
         if: always()
         run: |
