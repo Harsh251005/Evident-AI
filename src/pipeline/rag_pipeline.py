@@ -7,7 +7,8 @@ def answer_query(
     query: str,
     collection_name: str,
     retrieval_mode: str = "hybrid",
-    top_k: int = 5,
+    top_k: int = None,
+    rerank: bool = True,
 ) -> str:
 
     context_docs = retrieve(
@@ -15,6 +16,7 @@ def answer_query(
         collection_name=collection_name,
         mode=retrieval_mode,
         top_k=top_k,
+        rerank=rerank,
     )
 
     answer = generate_answer(

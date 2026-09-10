@@ -34,10 +34,24 @@ def reciprocal_rank_fusion(
         reverse=True,
     )
 
-    return [
-        document_lookup[doc_id]
-        for doc_id, _ in ranked_docs[:top_k]
-    ]
+    results = []
+
+    for doc_id, rrf_score in ranked_docs[:top_k]:
+        doc = document_lookup[doc_id]
+
+        # Overwrite "score" with the actual fused RRF score. Without this,
+        # a doc that appears in both rankings silently keeps whichever
+        # retriever's raw score (cosine similarity vs. BM25) happened to be
+        # written last — the wrong scale, and sometimes a genuine 0.0 for a
+        # doc that only survived via the other ranking.
+        results.append(
+            Document(
+                page_content=doc.page_content,
+                metadata={**doc.metadata, "score": rrf_score},
+            )
+        )
+
+    return results
 
 
 def hybrid_search(
