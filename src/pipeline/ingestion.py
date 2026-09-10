@@ -3,7 +3,7 @@ from src.ingestion.chunker import chunk_documents
 from src.ingestion.embedder import embed_texts
 from src.ingestion.vector_store import (
     generate_collection_name,
-    collection_exists,
+    collection_is_populated,
     create_collection_if_not_exists,
     add_points,
 )
@@ -32,7 +32,7 @@ def ingest_document(file_path: str) -> str:
 
     collection_name = generate_collection_name(file_path)
 
-    if collection_exists(collection_name):
+    if collection_is_populated(collection_name):
         logger.info(
             f"Document already ingested: {collection_name}"
         )

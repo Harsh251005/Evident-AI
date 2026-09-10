@@ -15,6 +15,10 @@ client = QdrantClient(
     url=settings.QDRANT_URL,
     api_key=settings.QDRANT_API_KEY,
     prefer_grpc=False,
+    timeout=60,
+    # Qdrant Cloud clusters are managed and may run a slightly newer server
+    # version than the pinned client — harmless, so skip the version check.
+    check_compatibility=False,
 )
 
 def generate_collection_name(file_path: str) -> str:
@@ -79,9 +83,14 @@ def add_points(
             )
         )
 
-    client.upsert(
+    # Batched, retrying upload — a single upsert() call with hundreds of
+    # embeddings in one request times out against a remote cloud cluster.
+    client.upload_points(
         collection_name=collection_name,
         points=points,
+        batch_size=64,
+        max_retries=3,
+        wait=True,
     )
 
     logger.info(
@@ -91,3 +100,15 @@ def add_points(
 
 def collection_exists(collection_name: str) -> bool:
     return client.collection_exists(collection_name)
+
+
+def collection_is_populated(collection_name: str) -> bool:
+    """
+    A collection can exist but be empty — e.g. after create_collection()
+    succeeded but the point upload failed or was interrupted. Ingestion
+    should only be skipped if the collection actually has data.
+    """
+    if not client.collection_exists(collection_name):
+        return False
+
+    return client.get_collection(collection_name).points_count > 0
