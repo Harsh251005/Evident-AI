@@ -1,7 +1,7 @@
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
 
-from src.ingestion.vector_store import client
+from src.ingestion.vector_store import client, _with_retry
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -23,7 +23,8 @@ def _get_collection_documents(
 
     documents = []
 
-    points, _ = client.scroll(
+    points, _ = _with_retry(
+        client.scroll,
         collection_name=collection_name,
         limit=10000,
         with_payload=True,

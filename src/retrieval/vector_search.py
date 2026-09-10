@@ -3,7 +3,7 @@ from openai import OpenAI
 from qdrant_client.models import ScoredPoint
 
 from config.settings import settings
-from src.ingestion.vector_store import client
+from src.ingestion.vector_store import client, _with_retry
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -45,7 +45,8 @@ def vector_search(
 
     query_embedding = embed_query(query)
 
-    results: list[ScoredPoint] = client.query_points(
+    results: list[ScoredPoint] = _with_retry(
+        client.query_points,
         collection_name=collection_name,
         query=query_embedding,
         limit=top_k,

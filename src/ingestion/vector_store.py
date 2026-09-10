@@ -1,15 +1,39 @@
 from pathlib import Path
 import hashlib
+import time
 import uuid
 
+import httpx
 from langchain_core.documents import Document
 from qdrant_client import QdrantClient
+from qdrant_client.http.exceptions import ResponseHandlingException
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
 from config.settings import settings
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# upload_points() has its own built-in retry; plain calls like
+# collection_exists()/get_collection() don't, and a CI runner's network
+# path to a remote cluster can hit a transient reset that a laptop's
+# connection doesn't (observed in practice, not hypothetical).
+def _with_retry(fn, *args, attempts: int = 3, delay: float = 2.0, **kwargs):
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn(*args, **kwargs)
+        except (
+            ResponseHandlingException,
+            httpx.ConnectError,
+            httpx.ReadError,
+            httpx.WriteError,
+        ) as e:
+            if attempt == attempts:
+                raise
+            logger.warning(
+                f"Qdrant call failed (attempt {attempt}/{attempts}): {e} — retrying"
+            )
+            time.sleep(delay * attempt)
 
 client = QdrantClient(
     url=settings.QDRANT_URL,
@@ -42,13 +66,14 @@ def create_collection_if_not_exists(
     vector_size: int,
 ) -> None:
 
-    if client.collection_exists(collection_name):
+    if _with_retry(client.collection_exists, collection_name):
         logger.info(
             f"Collection '{collection_name}' already exists"
         )
         return
 
-    client.create_collection(
+    _with_retry(
+        client.create_collection,
         collection_name=collection_name,
         vectors_config=VectorParams(
             size=vector_size,
@@ -99,7 +124,7 @@ def add_points(
     )
 
 def collection_exists(collection_name: str) -> bool:
-    return client.collection_exists(collection_name)
+    return _with_retry(client.collection_exists, collection_name)
 
 
 def collection_is_populated(collection_name: str) -> bool:
@@ -108,7 +133,7 @@ def collection_is_populated(collection_name: str) -> bool:
     succeeded but the point upload failed or was interrupted. Ingestion
     should only be skipped if the collection actually has data.
     """
-    if not client.collection_exists(collection_name):
+    if not _with_retry(client.collection_exists, collection_name):
         return False
 
-    return client.get_collection(collection_name).points_count > 0
+    return _with_retry(client.get_collection, collection_name).points_count > 0
